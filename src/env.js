@@ -11,20 +11,24 @@ export const env = createEnv({
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
-    // Repository Configuration
+    // PocketBase Configuration
+    PB_URL: z.string().url().default("https://db.community-scripts.org"),
+    // Repository Configuration (for downloading script files)
     REPO_URL: z.string().url().optional(),
    
     REPO_BRANCH: z.string().default("main"),
     SCRIPTS_DIRECTORY: z.string().default("scripts"),
-    JSON_FOLDER: z.string().default("json"),
     ALLOWED_SCRIPT_EXTENSIONS: z.string().default(".sh,.py,.js,.ts,.bash"),
     // Security
     MAX_SCRIPT_EXECUTION_TIME: z.string().default("300000"), // 5 minutes in ms
     ALLOWED_SCRIPT_PATHS: z.string().default("scripts/"),
     // WebSocket Configuration
     WEBSOCKET_PORT: z.string().default("3001"),
-    // GitHub Configuration
+    // Git provider tokens (optional, for private repos)
     GITHUB_TOKEN: z.string().optional(),
+    GITLAB_TOKEN: z.string().optional(),
+    BITBUCKET_APP_PASSWORD: z.string().optional(),
+    BITBUCKET_TOKEN: z.string().optional(),
     // Authentication Configuration
     AUTH_USERNAME: z.string().optional(),
     AUTH_PASSWORD_HASH: z.string().optional(),
@@ -50,20 +54,23 @@ export const env = createEnv({
    */
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
-    // Repository Configuration
+    // PocketBase Configuration
+    PB_URL: process.env.PB_URL,
+    // Repository Configuration (for downloading script files)
     REPO_URL: process.env.REPO_URL,
    
     REPO_BRANCH: process.env.REPO_BRANCH,
     SCRIPTS_DIRECTORY: process.env.SCRIPTS_DIRECTORY,
-    JSON_FOLDER: process.env.JSON_FOLDER,
     ALLOWED_SCRIPT_EXTENSIONS: process.env.ALLOWED_SCRIPT_EXTENSIONS,
     // Security
     MAX_SCRIPT_EXECUTION_TIME: process.env.MAX_SCRIPT_EXECUTION_TIME,
     ALLOWED_SCRIPT_PATHS: process.env.ALLOWED_SCRIPT_PATHS,
     // WebSocket Configuration
     WEBSOCKET_PORT: process.env.WEBSOCKET_PORT,
-    // GitHub Configuration
     GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+    GITLAB_TOKEN: process.env.GITLAB_TOKEN,
+    BITBUCKET_APP_PASSWORD: process.env.BITBUCKET_APP_PASSWORD,
+    BITBUCKET_TOKEN: process.env.BITBUCKET_TOKEN,
     // Authentication Configuration
     AUTH_USERNAME: process.env.AUTH_USERNAME,
     AUTH_PASSWORD_HASH: process.env.AUTH_PASSWORD_HASH,

@@ -3,6 +3,7 @@ import { parse } from 'url';
 import next from 'next';
 import { WebSocketServer } from 'ws';
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 import { join, resolve } from 'path';
 import stripAnsi from 'strip-ansi';
 import { spawn as ptySpawn } from 'node-pty';
@@ -56,6 +57,8 @@ const handle = app.getRequestHandler();
  * @property {string} user
  * @property {string} password
  * @property {number} [id]
+ * @property {string} [auth_type]
+ * @property {string} [ssh_key_path]
  */
 
 /**
@@ -82,6 +85,7 @@ const handle = app.getRequestHandler();
  * @property {number} [cloneCount]
  * @property {string[]} [hostnames]
  * @property {'lxc'|'vm'} [containerType]
+ * @property {Record<string, string|number|boolean>} [envVars]
  */
 
 class ScriptExecutionHandler {
@@ -295,25 +299,44 @@ class ScriptExecutionHandler {
   }
 
   /**
+   * Resolve full server from DB when client sends server with id but no ssh_key_path (e.g. for Shell/Update over SSH).
+   * @param {ServerInfo|null} server - Server from WebSocket message
+   * @returns {Promise<ServerInfo|null>} Same server or full server from DB
+   */
+  async resolveServerForSSH(server) {
+    if (!server?.id) return server;
+    if (server.auth_type === 'key' && (!server.ssh_key_path || !existsSync(server.ssh_key_path))) {
+      const full = await this.db.getServerById(server.id);
+      return /** @type {ServerInfo|null} */ (full ?? server);
+    }
+    return server;
+  }
+
+  /**
    * @param {ExtendedWebSocket} ws
    * @param {WebSocketMessage} message
    */
   async handleMessage(ws, message) {
-    const { action, scriptPath, executionId, input, mode, server, isUpdate, isShell, isBackup, isClone, containerId, storage, backupStorage, cloneCount, hostnames, containerType } = message;
+    const { action, scriptPath, executionId, input, mode, server, isUpdate, isShell, isBackup, isClone, containerId, storage, backupStorage, cloneCount, hostnames, containerType, envVars } = message;
 
     switch (action) {
       case 'start':
         if (scriptPath && executionId) {
+          let serverToUse = server;
+          if (serverToUse?.id) {
+            serverToUse = await this.resolveServerForSSH(serverToUse) ?? serverToUse;
+          }
+          const resolved = serverToUse ?? server;
           if (isClone && containerId && storage && server && cloneCount && hostnames && containerType) {
-            await this.startSSHCloneExecution(ws, containerId, executionId, storage, server, containerType, cloneCount, hostnames);
+            await this.startSSHCloneExecution(ws, containerId, executionId, storage, /** @type {ServerInfo} */ (resolved), containerType, cloneCount, hostnames);
           } else if (isBackup && containerId && storage) {
-            await this.startBackupExecution(ws, containerId, executionId, storage, mode, server);
+            await this.startBackupExecution(ws, containerId, executionId, storage, mode, resolved);
           } else if (isUpdate && containerId) {
-            await this.startUpdateExecution(ws, containerId, executionId, mode, server, backupStorage);
+            await this.startUpdateExecution(ws, containerId, executionId, mode, resolved, backupStorage);
           } else if (isShell && containerId) {
-            await this.startShellExecution(ws, containerId, executionId, mode, server);
+            await this.startShellExecution(ws, containerId, executionId, mode, resolved, containerType);
           } else {
-            await this.startScriptExecution(ws, scriptPath, executionId, mode, server);
+            await this.startScriptExecution(ws, scriptPath, executionId, mode, resolved, envVars);
           }
         } else {
           this.sendMessage(ws, {
@@ -351,8 +374,9 @@ class ScriptExecutionHandler {
    * @param {string} executionId
    * @param {string} mode
    * @param {ServerInfo|null} server
+   * @param {Object} [envVars] - Optional environment variables to pass to the script
    */
-  async startScriptExecution(ws, scriptPath, executionId, mode = 'local', server = null) {
+  async startScriptExecution(ws, scriptPath, executionId, mode = 'local', server = null, envVars = {}) {
     /** @type {number|null} */
     let installationId = null;
     
@@ -381,7 +405,7 @@ class ScriptExecutionHandler {
 
       // Handle SSH execution
       if (mode === 'ssh' && server) {
-        await this.startSSHScriptExecution(ws, scriptPath, executionId, server, installationId);
+        await this.startSSHScriptExecution(ws, scriptPath, executionId, server, installationId, envVars);
         return;
       }
       
@@ -407,19 +431,32 @@ class ScriptExecutionHandler {
         return;
       }
 
+      // Format environment variables for local execution
+      // Convert envVars object to environment variables
+      const envWithVars = {
+        ...process.env,
+        TERM: 'xterm-256color', // Enable proper terminal support
+        FORCE_ANSI: 'true', // Allow ANSI codes for proper display
+        COLUMNS: '80', // Set terminal width
+        LINES: '24' // Set terminal height
+      };
+
+      // Add envVars to environment
+      if (envVars && typeof envVars === 'object') {
+        for (const [key, value] of Object.entries(envVars)) {
+          /** @type {Record<string, string>} */
+          const envRecord = envWithVars;
+          envRecord[key] = String(value);
+        }
+      }
+
       // Start script execution with pty for proper TTY support
       const childProcess = ptySpawn('bash', [resolvedPath], {
         cwd: scriptsDir,
         name: 'xterm-256color',
         cols: 80,
         rows: 24,
-        env: {
-          ...process.env,
-          TERM: 'xterm-256color', // Enable proper terminal support
-          FORCE_ANSI: 'true', // Allow ANSI codes for proper display
-          COLUMNS: '80', // Set terminal width
-          LINES: '24' // Set terminal height
-        }
+        env: envWithVars
       });
 
       // pty handles encoding automatically
@@ -522,8 +559,9 @@ class ScriptExecutionHandler {
    * @param {string} executionId
    * @param {ServerInfo} server
    * @param {number|null} installationId
+   * @param {Object} [envVars] - Optional environment variables to pass to the script
    */
-  async startSSHScriptExecution(ws, scriptPath, executionId, server, installationId = null) {
+  async startSSHScriptExecution(ws, scriptPath, executionId, server, installationId = null, envVars = {}) {
     const sshService = getSSHExecutionService();
 
     // Send start message
@@ -612,7 +650,8 @@ class ScriptExecutionHandler {
           
           // Clean up
           this.activeExecutions.delete(executionId);
-        }
+        },
+        envVars
       ));
 
       // Store the execution with installation ID
@@ -1136,10 +1175,11 @@ class ScriptExecutionHandler {
         const hostname = hostnames[i];
         
         try {
-          // Read config file to get hostname/name
+          // Read config file to get hostname/name (node-specific path)
+          const nodeName = server.name;
           const configPath = containerType === 'lxc' 
-            ? `/etc/pve/lxc/${nextId}.conf`
-            : `/etc/pve/qemu-server/${nextId}.conf`;
+            ? `/etc/pve/nodes/${nodeName}/lxc/${nextId}.conf`
+            : `/etc/pve/nodes/${nodeName}/qemu-server/${nextId}.conf`;
           
           let configContent = '';
           await new Promise(/** @type {(resolve: (value?: void) => void) => void} */ ((resolve) => {
@@ -1457,21 +1497,21 @@ class ScriptExecutionHandler {
    * @param {string} executionId
    * @param {string} mode
    * @param {ServerInfo|null} server
+   * @param {'lxc'|'vm'} [containerType='lxc']
    */
-  async startShellExecution(ws, containerId, executionId, mode = 'local', server = null) {
+  async startShellExecution(ws, containerId, executionId, mode = 'local', server = null, containerType = 'lxc') {
     try {
-      
-      // Send start message
+      const typeLabel = containerType === 'vm' ? 'VM' : 'container';
       this.sendMessage(ws, {
         type: 'start',
-        data: `Starting shell session for container ${containerId}...`,
+        data: `Starting shell session for ${typeLabel} ${containerId}...`,
         timestamp: Date.now()
       });
 
       if (mode === 'ssh' && server) {
-        await this.startSSHShellExecution(ws, containerId, executionId, server);
+        await this.startSSHShellExecution(ws, containerId, executionId, server, containerType);
       } else {
-        await this.startLocalShellExecution(ws, containerId, executionId);
+        await this.startLocalShellExecution(ws, containerId, executionId, containerType);
       }
 
     } catch (error) {
@@ -1488,12 +1528,12 @@ class ScriptExecutionHandler {
    * @param {ExtendedWebSocket} ws
    * @param {string} containerId
    * @param {string} executionId
+   * @param {'lxc'|'vm'} [containerType='lxc']
    */
-  async startLocalShellExecution(ws, containerId, executionId) {
+  async startLocalShellExecution(ws, containerId, executionId, containerType = 'lxc') {
     const { spawn } = await import('node-pty');
-    
-    // Create a shell process that will run pct enter
-    const childProcess = spawn('bash', ['-c', `pct enter ${containerId}`], {
+    const shellCommand = containerType === 'vm' ? `qm terminal ${containerId}` : `pct enter ${containerId}`;
+    const childProcess = spawn('bash', ['-c', shellCommand], {
       name: 'xterm-color',
       cols: 80,
       rows: 24,
@@ -1536,14 +1576,15 @@ class ScriptExecutionHandler {
    * @param {string} containerId
    * @param {string} executionId
    * @param {ServerInfo} server
+   * @param {'lxc'|'vm'} [containerType='lxc']
    */
-  async startSSHShellExecution(ws, containerId, executionId, server) {
+  async startSSHShellExecution(ws, containerId, executionId, server, containerType = 'lxc') {
     const sshService = getSSHExecutionService();
-    
+    const shellCommand = containerType === 'vm' ? `qm terminal ${containerId}` : `pct enter ${containerId}`;
     try {
       const execution = await sshService.executeCommand(
         server,
-        `pct enter ${containerId}`,
+        shellCommand,
         /** @param {string} data */
         (data) => {
           this.sendMessage(ws, {
@@ -1593,6 +1634,7 @@ class ScriptExecutionHandler {
 // TerminalHandler removed - not used by current application
 
 app.prepare().then(() => {
+  console.log('> Next.js app prepared successfully');
   const httpServer = createServer(async (req, res) => {
     try {
       // Be sure to pass `true` as the second argument to `url.parse`.
@@ -1698,4 +1740,9 @@ app.prepare().then(() => {
         autoSyncModule.setupGracefulShutdown();
       }
     });
+}).catch((err) => {
+  console.error('> Failed to start server:', err.message);
+  console.error('> If you see "Could not find a production build", run: npm run build');
+  console.error('> Full error:', err);
+  process.exit(1);
 });

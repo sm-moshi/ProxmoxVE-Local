@@ -8,7 +8,9 @@ import { ScriptDetailModal } from "./ScriptDetailModal";
 import { CategorySidebar } from "./CategorySidebar";
 import { FilterBar, type FilterState } from "./FilterBar";
 import { ViewToggle } from "./ViewToggle";
+import { ConfirmationModal } from "./ConfirmationModal";
 import { Button } from "./ui/button";
+import { RefreshCw } from "lucide-react";
 import type { ScriptCard as ScriptCardType } from "~/types/script";
 import type { Server } from "~/types/server";
 import { getDefaultFilters, mergeFiltersWithDefaults } from "./filterUtils";
@@ -32,8 +34,15 @@ export function DownloadedScriptsTab({
   const [filters, setFilters] = useState<FilterState>(getDefaultFilters());
   const [saveFiltersEnabled, setSaveFiltersEnabled] = useState(false);
   const [isLoadingFilters, setIsLoadingFilters] = useState(true);
+  const [updateAllConfirmOpen, setUpdateAllConfirmOpen] = useState(false);
+  const [updateResult, setUpdateResult] = useState<{
+    successCount: number;
+    failCount: number;
+    failed: { slug: string; error: string }[];
+  } | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
+  const utils = api.useUtils();
   const {
     data: scriptCardsData,
     isLoading: githubLoading,
@@ -49,6 +58,30 @@ export function DownloadedScriptsTab({
     { slug: selectedSlug ?? "" },
     { enabled: !!selectedSlug },
   );
+
+  const loadMultipleScriptsMutation = api.scripts.loadMultipleScripts.useMutation({
+    onSuccess: (data) => {
+      void utils.scripts.getAllDownloadedScripts.invalidate();
+      void utils.scripts.getScriptCardsWithCategories.invalidate();
+      setUpdateResult({
+        successCount: data.successful?.length ?? 0,
+        failCount: data.failed?.length ?? 0,
+        failed: (data.failed ?? []).map((f) => ({
+          slug: f.slug,
+          error: f.error ?? "Unknown error",
+        })),
+      });
+      setTimeout(() => setUpdateResult(null), 8000);
+    },
+    onError: (error) => {
+      setUpdateResult({
+        successCount: 0,
+        failCount: 1,
+        failed: [{ slug: "Request failed", error: error.message }],
+      });
+      setTimeout(() => setUpdateResult(null), 8000);
+    },
+  });
 
   // Load SAVE_FILTER setting, saved filters, and view mode on component mount
   useEffect(() => {
@@ -170,7 +203,6 @@ export function DownloadedScriptsTab({
         if (!scriptMap.has(script.slug)) {
           scriptMap.set(script.slug, {
             ...script,
-            source: "github" as const,
             isDownloaded: false, // Will be updated by status check
             isUpToDate: false, // Will be updated by status check
           });
@@ -314,22 +346,6 @@ export function DownloadedScriptsTab({
       });
     }
 
-    // Filter by repositories
-    if (filters.selectedRepositories.length > 0) {
-      scripts = scripts.filter((script) => {
-        if (!script) return false;
-        const repoUrl = script.repository_url;
-
-        // If script has no repository_url, exclude it when filtering by repositories
-        if (!repoUrl) {
-          return false;
-        }
-
-        // Only include scripts from selected repositories
-        return filters.selectedRepositories.includes(repoUrl);
-      });
-    }
-
     // Apply sorting
     scripts.sort((a, b) => {
       if (!a || !b) return 0;
@@ -414,6 +430,21 @@ export function DownloadedScriptsTab({
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setSelectedSlug(null);
+  };
+
+  const handleUpdateAllClick = () => {
+    setUpdateResult(null);
+    setUpdateAllConfirmOpen(true);
+  };
+
+  const handleUpdateAllConfirm = () => {
+    setUpdateAllConfirmOpen(false);
+    const slugs = downloadedScripts
+      .map((s) => s.slug)
+      .filter((slug): slug is string => Boolean(slug));
+    if (slugs.length > 0) {
+      loadMultipleScriptsMutation.mutate({ slugs });
+    }
   };
 
   if (githubLoading || localLoading) {
@@ -508,6 +539,43 @@ export function DownloadedScriptsTab({
 
         {/* Main Content */}
         <div className="order-1 min-w-0 flex-1 lg:order-2" ref={gridRef}>
+          {/* Update all downloaded scripts */}
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            <Button
+              onClick={handleUpdateAllClick}
+              disabled={loadMultipleScriptsMutation.isPending}
+              variant="secondary"
+              size="default"
+              className="flex items-center gap-2"
+            >
+              {loadMultipleScriptsMutation.isPending ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  <span>Updating...</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4" />
+                  <span>Update all downloaded scripts</span>
+                </>
+              )}
+            </Button>
+            {updateResult && (
+              <span className="text-muted-foreground text-sm">
+                Updated {updateResult.successCount} successfully
+                {updateResult.failCount > 0
+                  ? `, ${updateResult.failCount} failed`
+                  : ""}
+                .
+                {updateResult.failCount > 0 && updateResult.failed.length > 0 && (
+                  <span className="ml-1" title={updateResult.failed.map((f) => `${f.slug}: ${f.error}`).join("\n")}>
+                    (hover for details)
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
+
           {/* Enhanced Filter Bar */}
           <FilterBar
             filters={filters}
@@ -620,6 +688,17 @@ export function DownloadedScriptsTab({
             isOpen={isModalOpen}
             onClose={handleCloseModal}
             onInstallScript={onInstallScript}
+          />
+
+          <ConfirmationModal
+            isOpen={updateAllConfirmOpen}
+            onClose={() => setUpdateAllConfirmOpen(false)}
+            onConfirm={handleUpdateAllConfirm}
+            title="Update all downloaded scripts"
+            message={`Update all ${downloadedScripts.length} downloaded scripts? This may take several minutes.`}
+            variant="simple"
+            confirmButtonText="Update all"
+            cancelButtonText="Cancel"
           />
         </div>
       </div>
