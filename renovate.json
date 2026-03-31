@@ -1,3 +1,73 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json"
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>sm-moshi/infra//.github/renovate/base.json",
+    "config:best-practices",
+    ":preserveSemverRanges"
+  ],
+  "pinDigests": false,
+  "enabledManagers": [
+    "npm",
+    "github-actions"
+  ],
+  "packageRules": [
+    {
+      "description": "Group Prisma packages",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^@?prisma/"],
+      "groupName": "prisma"
+    },
+    {
+      "description": "Group tRPC packages",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^@trpc\\//"],
+      "groupName": "trpc"
+    },
+    {
+      "description": "Group xterm packages",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^@xterm\\//"],
+      "groupName": "xterm"
+    },
+    {
+      "description": "Group Tailwind CSS packages",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^@?tailwindcss/"],
+      "groupName": "tailwindcss"
+    },
+    {
+      "description": "Group Vitest packages",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^@?vitest/"],
+      "groupName": "vitest"
+    },
+    {
+      "description": "Group React packages",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^react/", "/^@types\\/react/"],
+      "groupName": "react"
+    },
+    {
+      "description": "Group ESLint packages",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/eslint/"],
+      "groupName": "eslint"
+    },
+    {
+      "description": "Group GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    },
+    {
+      "description": "Auto-merge patch and minor npm updates",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true
+    },
+    {
+      "description": "Auto-merge GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "automerge": true
+    }
+  ]
 }
