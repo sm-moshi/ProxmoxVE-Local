@@ -3,7 +3,7 @@
  * Mirrors ProxmoxVE-Frontend/lib/pb-queries-server.ts.
  * All queries are unauthenticated (public API).
  */
-import { getPb } from "./pbService";
+import { getPb, withPbRetry } from "./pbService";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -158,18 +158,22 @@ function toScript(record: Record<string, unknown>): PBScript {
 const CARD_FIELDS =
   "id,slug,name,description,logo,type,categories,is_dev,has_arm,is_disabled,is_deleted,privileged,port,updateable,website,documentation,script_created,script_updated,expand.categories.*,expand.type.*";
 
+/* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unnecessary-type-assertion */
+
 /**
  * Fetch all script cards (lightweight, no install methods / notes).
  * Suitable for the script listing UI.
  */
 export async function getScriptCards(): Promise<PBScriptCard[]> {
   const pb = getPb();
-  const records = await pb.collection("script_scripts").getFullList({
-    sort: "name",
-    expand: "categories,type",
-    batch: 500,
-    fields: CARD_FIELDS,
-  });
+  const records = await withPbRetry(() =>
+    pb.collection("script_scripts").getFullList({
+      sort: "name",
+      expand: "categories,type",
+      batch: 500,
+      fields: CARD_FIELDS,
+    }),
+  );
   return records.map((r) => toCard(r as unknown as Record<string, unknown>));
 }
 
@@ -178,10 +182,12 @@ export async function getScriptCards(): Promise<PBScriptCard[]> {
  */
 export async function getCategories(): Promise<PBCategory[]> {
   const pb = getPb();
-  const records = await pb.collection("script_categories").getFullList({
-    sort: "sort_order,name",
-    batch: 100,
-  });
+  const records = await withPbRetry(() =>
+    pb.collection("script_categories").getFullList({
+      sort: "sort_order,name",
+      batch: 100,
+    }),
+  );
   return records as unknown as PBCategory[];
 }
 
@@ -190,10 +196,12 @@ export async function getCategories(): Promise<PBCategory[]> {
  */
 export async function getScriptTypes(): Promise<PBScriptType[]> {
   const pb = getPb();
-  const records = await pb.collection("z_ref_script_types").getFullList({
-    fields: "id,type",
-    batch: 100,
-  });
+  const records = await withPbRetry(() =>
+    pb.collection("z_ref_script_types").getFullList({
+      fields: "id,type",
+      batch: 100,
+    }),
+  );
   return records as unknown as PBScriptType[];
 }
 
@@ -204,11 +212,13 @@ export async function getScriptTypes(): Promise<PBScriptType[]> {
 export async function getScriptBySlug(slug: string): Promise<PBScript | null> {
   const pb = getPb();
   try {
-    const record = await pb
-      .collection("script_scripts")
-      .getFirstListItem(pb.filter("slug = {:slug}", { slug }), {
-        expand: "categories,type",
-      });
+    const record = await withPbRetry(() =>
+      pb
+        .collection("script_scripts")
+        .getFirstListItem(pb.filter("slug = {:slug}", { slug }), {
+          expand: "categories,type",
+        }),
+    );
     return toScript(record as unknown as Record<string, unknown>);
   } catch {
     return null;
@@ -221,11 +231,13 @@ export async function getScriptBySlug(slug: string): Promise<PBScript | null> {
  */
 export async function getAllScripts(): Promise<PBScript[]> {
   const pb = getPb();
-  const records = await pb.collection("script_scripts").getFullList({
-    sort: "name",
-    expand: "categories,type",
-    batch: 500,
-  });
+  const records = await withPbRetry(() =>
+    pb.collection("script_scripts").getFullList({
+      sort: "name",
+      expand: "categories,type",
+      batch: 500,
+    }),
+  );
   return records.map((r) => toScript(r as unknown as Record<string, unknown>));
 }
 
