@@ -1,9 +1,8 @@
-'use client';
+"use client";
 
-import { useState, useRef, useEffect } from 'react';
-import { api } from '~/trpc/react';
-import { Button } from './ui/button';
-import { ContextualHelpIcon } from './ContextualHelpIcon';
+import { useState, useRef, useEffect } from "react";
+import { api } from "~/trpc/react";
+import { Button } from "./ui/button";
 
 export function ResyncButton() {
   const [isResyncing, setIsResyncing] = useState(false);
@@ -19,17 +18,17 @@ export function ResyncButton() {
       setIsResyncing(false);
       setLastSync(new Date());
       if (data.success) {
-        setSyncMessage(data.message ?? 'Scripts synced successfully');
+        setSyncMessage(data.message ?? "Scripts synced successfully");
         // Only reload if this was triggered by user action
         if (isUserInitiatedRef.current && !hasReloadedRef.current) {
           hasReloadedRef.current = true;
-          
+
           // Clear any existing reload timeout
           if (reloadTimeoutRef.current) {
             clearTimeout(reloadTimeoutRef.current);
             reloadTimeoutRef.current = null;
           }
-          
+
           // Set new reload timeout
           reloadTimeoutRef.current = setTimeout(() => {
             reloadTimeoutRef.current = null;
@@ -40,7 +39,7 @@ export function ResyncButton() {
           isUserInitiatedRef.current = false;
         }
       } else {
-        setSyncMessage(data.error ?? 'Failed to sync scripts');
+        setSyncMessage(data.error ?? "Failed to sync scripts");
         // Clear message after 3 seconds for errors
         if (messageTimeoutRef.current) {
           clearTimeout(messageTimeoutRef.current);
@@ -69,13 +68,13 @@ export function ResyncButton() {
   const handleResync = async () => {
     // Prevent multiple simultaneous sync operations
     if (isResyncing) return;
-    
+
     // Clear any pending reload timeout
     if (reloadTimeoutRef.current) {
       clearTimeout(reloadTimeoutRef.current);
       reloadTimeoutRef.current = null;
     }
-    
+
     // Mark as user-initiated before starting
     isUserInitiatedRef.current = true;
     hasReloadedRef.current = false;
@@ -102,52 +101,46 @@ export function ResyncButton() {
   }, []);
 
   return (
-    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-      <div className="text-sm text-muted-foreground font-medium">
-        Sync scripts and cache logos locally
-      </div>
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-        <div className="flex items-center gap-2">
-          <Button
-            onClick={handleResync}
-            disabled={isResyncing}
-            variant="outline"
-            size="default"
-            className="inline-flex items-center"
+    <>
+      <Button
+        onClick={handleResync}
+        disabled={isResyncing}
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground hover:text-foreground"
+        title={isResyncing ? "Syncing..." : "Sync Scripts"}
+        aria-label="Sync Scripts"
+      >
+        {isResyncing ? (
+          <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-current"></div>
+        ) : (
+          <svg
+            className="h-4 w-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
           >
-            {isResyncing ? (
-              <>
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                <span>Syncing...</span>
-              </>
-            ) : (
-              <>
-                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                <span>Sync Scripts</span>
-              </>
-            )}
-          </Button>
-          <ContextualHelpIcon section="sync-button" tooltip="Help with Sync Button" />
-        </div>
-
-        {lastSync && (
-          <div className="text-xs text-muted-foreground">
-            Last sync: {lastSync.toLocaleTimeString()}
-          </div>
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
+          </svg>
         )}
-      </div>
+      </Button>
 
       {syncMessage && (
-        <div className={`text-sm px-3 py-1 rounded-lg ${
-          syncMessage.includes('Error') || syncMessage.includes('Failed')
-            ? 'bg-error/10 text-error'
-            : 'bg-success/10 text-success'
-        }`}>
+        <div
+          className={`rounded-lg px-2 py-1 text-xs ${
+            syncMessage.includes("Error") || syncMessage.includes("Failed")
+              ? "bg-error/10 text-error"
+              : "bg-success/10 text-success"
+          }`}
+        >
           {syncMessage}
         </div>
       )}
-    </div>
+    </>
   );
 }

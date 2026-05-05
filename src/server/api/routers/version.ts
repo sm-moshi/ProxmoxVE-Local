@@ -12,6 +12,7 @@ interface GitHubRelease {
   published_at: string;
   html_url: string;
   body: string;
+  prerelease: boolean;
 }
 
 // Helper function to fetch from GitHub API with optional authentication
@@ -53,13 +54,21 @@ export const versionRouter = createTRPCRouter({
   getLatestRelease: publicProcedure
     .query(async () => {
       try {
-        const response = await fetchGitHubAPI('https://api.github.com/repos/community-scripts/ProxmoxVE-Local/releases/latest');
-        
-        if (!response.ok) {
-          throw new Error(`GitHub API error: ${response.status}`);
+        const allowPrerelease = env.ALLOW_PRERELEASE === 'true';
+        let release: GitHubRelease;
+
+        if (allowPrerelease) {
+          const response = await fetchGitHubAPI('https://api.github.com/repos/community-scripts/ProxmoxVE-Local/releases');
+          if (!response.ok) throw new Error(`GitHub API error: ${response.status}`);
+          const releases: GitHubRelease[] = await response.json();
+          const sorted = releases.sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime());
+          if (!sorted[0]) throw new Error('No releases found');
+          release = sorted[0];
+        } else {
+          const response = await fetchGitHubAPI('https://api.github.com/repos/community-scripts/ProxmoxVE-Local/releases/latest');
+          if (!response.ok) throw new Error(`GitHub API error: ${response.status}`);
+          release = await response.json();
         }
-        
-        const release: GitHubRelease = await response.json();
         
         return {
           success: true,
@@ -84,18 +93,24 @@ export const versionRouter = createTRPCRouter({
   getVersionStatus: publicProcedure
     .query(async () => {
       try {
-
         const versionPath = join(process.cwd(), 'VERSION');
         const currentVersion = (await readFile(versionPath, 'utf-8')).trim();
-        
 
-        const response = await fetchGitHubAPI('https://api.github.com/repos/community-scripts/ProxmoxVE-Local/releases/latest');
-        
-        if (!response.ok) {
-          throw new Error(`GitHub API error: ${response.status}`);
+        const allowPrerelease = env.ALLOW_PRERELEASE === 'true';
+        let release: GitHubRelease;
+
+        if (allowPrerelease) {
+          const response = await fetchGitHubAPI('https://api.github.com/repos/community-scripts/ProxmoxVE-Local/releases');
+          if (!response.ok) throw new Error(`GitHub API error: ${response.status}`);
+          const releases: GitHubRelease[] = await response.json();
+          const sorted = releases.sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime());
+          if (!sorted[0]) throw new Error('No releases found');
+          release = sorted[0];
+        } else {
+          const response = await fetchGitHubAPI('https://api.github.com/repos/community-scripts/ProxmoxVE-Local/releases/latest');
+          if (!response.ok) throw new Error(`GitHub API error: ${response.status}`);
+          release = await response.json();
         }
-        
-        const release: GitHubRelease = await response.json();
         const latestVersion = release.tag_name.replace('v', ''); 
         
 
@@ -238,10 +253,20 @@ export const versionRouter = createTRPCRouter({
         // Clear/create the log file
         await writeFile(logPath, '', 'utf-8');
         
-        // Always fetch the latest update.sh from GitHub before running
-        // This ensures we always use the newest update script, avoiding
-        // the "chicken-and-egg" problem where old scripts can't update properly
-        const updateScriptUrl = 'https://raw.githubusercontent.com/community-scripts/ProxmoxVE-Local/main/update.sh';
+        // Determine which branch to fetch update.sh from.
+        // Prerelease installs live on the v1.0.0 branch; stable installs on main.
+        // Fetching from the wrong branch would downgrade a prerelease to stable.
+        let updateBranch = 'main';
+        try {
+          const versionPath = join(process.cwd(), 'VERSION');
+          const currentVersion = (await readFile(versionPath, 'utf-8')).trim();
+          if (currentVersion.includes('pre')) {
+            updateBranch = 'v1.0.0';
+          }
+        } catch {
+          // If VERSION can't be read, fall back to main
+        }
+        const updateScriptUrl = `https://raw.githubusercontent.com/community-scripts/ProxmoxVE-Local/${updateBranch}/update.sh`;
         try {
           const response = await fetch(updateScriptUrl);
           if (response.ok) {

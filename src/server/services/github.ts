@@ -1,5 +1,6 @@
 import { env } from "~/env.js";
 import type { Script, ScriptCard, GitHubFile } from "~/types/script.js";
+import { logger } from "~/server/logging/logger";
 
 export class GitHubService {
   private baseUrl: string;
@@ -34,9 +35,12 @@ export class GitHubService {
       'User-Agent': 'PVEScripts-Local/1.0',
     };
     
-    // Add GitHub token authentication if available
-    if (env.GITHUB_TOKEN) {
-      headers.Authorization = `token ${env.GITHUB_TOKEN}`;
+    // Add GitHub token authentication if available.
+    // Read directly from process.env so tokens saved at runtime (without restart) are picked up.
+    // Both classic PATs (ghp_) and fine-grained PATs (github_pat_) work with Bearer.
+    const githubToken = process.env.GITHUB_TOKEN;
+    if (githubToken) {
+      headers.Authorization = `Bearer ${githubToken}`;
     }
     
     const response = await fetch(`${this.baseUrl}${endpoint}`, { headers });
@@ -66,7 +70,7 @@ export class GitHubService {
       // Filter for JSON files only
       return files.filter(file => file.name.endsWith('.json'));
     } catch (error) {
-      console.error('Error fetching JSON files from GitHub:', error);
+      logger.error('Error fetching JSON files from GitHub:', undefined, error);
       throw new Error('Failed to fetch script files from repository');
     }
   }
@@ -85,7 +89,7 @@ export class GitHubService {
       const content = Buffer.from(file.content, 'base64').toString('utf-8');
       return JSON.parse(content) as Script;
     } catch (error) {
-      console.error('Error fetching script content:', error);
+      logger.error('Error fetching script content:', undefined, error);
       throw new Error(`Failed to fetch script: ${filePath}`);
     }
   }
@@ -100,14 +104,14 @@ export class GitHubService {
           const script = await this.getScriptContent(file.path);
           scripts.push(script);
         } catch (error) {
-          console.error(`Failed to parse script ${file.name}:`, error);
+          logger.error(`Failed to parse script ${file.name}:`, undefined, error);
           // Continue with other files even if one fails
         }
       }
 
       return scripts;
     } catch (error) {
-      console.error('Error fetching all scripts:', error);
+      logger.error('Error fetching all scripts:', undefined, error);
       throw new Error('Failed to fetch scripts from repository');
     }
   }
@@ -126,7 +130,7 @@ export class GitHubService {
         website: script.website,
       }));
     } catch (error) {
-      console.error('Error creating script cards:', error);
+      logger.error('Error creating script cards:', undefined, error);
       throw new Error('Failed to create script cards');
     }
   }
@@ -136,7 +140,7 @@ export class GitHubService {
       const scripts = await this.getAllScripts();
       return scripts.find(script => script.slug === slug) ?? null;
     } catch (error) {
-      console.error('Error fetching script by slug:', error);
+      logger.error('Error fetching script by slug:', undefined, error);
       throw new Error(`Failed to fetch script: ${slug}`);
     }
   }

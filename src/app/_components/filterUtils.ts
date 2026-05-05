@@ -12,6 +12,8 @@ export function getDefaultFilters(): FilterState {
     selectedRepositories: [],
     sortBy: "name",
     sortOrder: "asc",
+    quickFilter: "all",
+    selectedCategory: null,
   };
 }
 
@@ -39,6 +41,8 @@ export function mergeFiltersWithDefaults(
     selectedRepositories: savedFilters.selectedRepositories ?? defaults.selectedRepositories,
     sortBy: savedFilters.sortBy ?? defaults.sortBy,
     sortOrder: savedFilters.sortOrder ?? defaults.sortOrder,
+    quickFilter: savedFilters.quickFilter ?? defaults.quickFilter,
+    selectedCategory: savedFilters.selectedCategory ?? defaults.selectedCategory,
   };
 }
 

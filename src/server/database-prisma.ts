@@ -98,6 +98,7 @@ type PBSStorageCredential = {
   storage_name: string;
   pbs_ip: string;
   pbs_datastore: string;
+  pbs_username: string;
   pbs_password: string;
   pbs_fingerprint: string;
   created_at: Date;
@@ -532,6 +533,7 @@ class DatabaseServicePrisma {
     storage_name: string;
     pbs_ip: string;
     pbs_datastore: string;
+    pbs_username: string;
     pbs_password: string;
     pbs_fingerprint: string;
   }): Promise<PBSStorageCredential> {
@@ -545,6 +547,7 @@ class DatabaseServicePrisma {
       update: {
         pbs_ip: credentialData.pbs_ip,
         pbs_datastore: credentialData.pbs_datastore,
+        pbs_username: credentialData.pbs_username,
         pbs_password: credentialData.pbs_password,
         pbs_fingerprint: credentialData.pbs_fingerprint,
         updated_at: new Date(),
@@ -554,6 +557,7 @@ class DatabaseServicePrisma {
         storage_name: credentialData.storage_name,
         pbs_ip: credentialData.pbs_ip,
         pbs_datastore: credentialData.pbs_datastore,
+        pbs_username: credentialData.pbs_username,
         pbs_password: credentialData.pbs_password,
         pbs_fingerprint: credentialData.pbs_fingerprint,
       },

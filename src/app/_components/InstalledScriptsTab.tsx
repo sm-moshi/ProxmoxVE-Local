@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from "react";
 import { api } from "~/trpc/react";
-import { Terminal } from "./Terminal";
+
 import { StatusBadge } from "./Badge";
 import { Button } from "./ui/button";
 import { ScriptInstallationCard } from "./ScriptInstallationCard";
@@ -13,7 +13,10 @@ import { LXCSettingsModal } from "./LXCSettingsModal";
 import { StorageSelectionModal } from "./StorageSelectionModal";
 import { BackupWarningModal } from "./BackupWarningModal";
 import { CloneCountInputModal } from "./CloneCountInputModal";
+import { ModalPortal } from "./modal/ModalStackProvider";
 import type { Storage } from "~/server/services/storageService";
+import type { Server } from "~/types/server";
+import { useShell } from "./ShellContext";
 import { getContrastColor } from "../../lib/colorUtils";
 import {
   DropdownMenu,
@@ -22,7 +25,23 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "./ui/dropdown-menu";
-import { Settings } from "lucide-react";
+import {
+  Settings,
+  FolderOpen,
+  Plus,
+  ScanSearch,
+  Eraser,
+  RefreshCw,
+  UploadCloud,
+  ChevronUp,
+  ChevronDown,
+  FolderX,
+  Loader2,
+  Info,
+} from "lucide-react";
+import { InstalledScriptsStats } from "./installed-scripts/InstalledScriptsStats";
+import { InstalledScriptsFilters } from "./installed-scripts/InstalledScriptsFilters";
+import { StatusMessage } from "./installed-scripts/StatusMessage";
 
 interface InstalledScript {
   id: number;
@@ -49,7 +68,24 @@ interface InstalledScript {
   is_vm?: boolean;
 }
 
+function buildServerFromScript(script: InstalledScript): Server {
+  return {
+    id: script.server_id!,
+    name: script.server_name ?? "",
+    ip: script.server_ip ?? "",
+    user: script.server_user!,
+    password: script.server_password ?? undefined,
+    auth_type: (script.server_auth_type ?? "password") as Server["auth_type"],
+    ssh_key: script.server_ssh_key ?? undefined,
+    ssh_key_passphrase: script.server_ssh_key_passphrase ?? undefined,
+    ssh_port: script.server_ssh_port ?? 22,
+    created_at: null,
+    updated_at: null,
+  };
+}
+
 export function InstalledScriptsTab() {
+  const { open: openShell } = useShell();
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<
     "all" | "success" | "failed" | "in_progress"
@@ -66,22 +102,34 @@ export function InstalledScriptsTab() {
   const [updatingScript, setUpdatingScript] = useState<{
     id: number;
     containerId: string;
-    server?: any;
+    server?: Server;
     backupStorage?: string;
     isBackupOnly?: boolean;
     isClone?: boolean;
     executionId?: string;
     cloneCount?: number;
     hostnames?: string[];
-    containerType?: 'lxc' | 'vm';
+    containerType?: "lxc" | "vm";
     storage?: string;
+    envVars?: Record<string, string>;
   } | null>(null);
-  const [openingShell, setOpeningShell] = useState<{
-    id: number;
-    containerId: string;
-    server?: any;
-    containerType?: 'lxc' | 'vm';
-  } | null>(null);
+  const [openingShell, _setOpeningShellUnused] = useState<null>(null); // replaced by ShellContext — kept to avoid refactoring refs below
+  const setOpeningShell = (
+    v: {
+      id: number;
+      containerId: string;
+      server?: Server;
+      containerType?: "lxc" | "vm";
+    } | null,
+  ) => {
+    if (v) {
+      openShell({
+        containerId: v.containerId,
+        server: v.server,
+        containerType: v.containerType ?? "lxc",
+      });
+    }
+  };
   const [showBackupPrompt, setShowBackupPrompt] = useState(false);
   const [showStorageSelection, setShowStorageSelection] = useState(false);
   const [pendingUpdateScript, setPendingUpdateScript] =
@@ -90,14 +138,26 @@ export function InstalledScriptsTab() {
   const [isLoadingStorages, setIsLoadingStorages] = useState(false);
   const [showBackupWarning, setShowBackupWarning] = useState(false);
   const [isPreUpdateBackup, setIsPreUpdateBackup] = useState(false); // Track if storage selection is for pre-update backup
-  const [pendingCloneScript, setPendingCloneScript] = useState<InstalledScript | null>(null);
+  const [pendingCloneScript, setPendingCloneScript] =
+    useState<InstalledScript | null>(null);
   const [cloneStorages, setCloneStorages] = useState<Storage[]>([]);
   const [isLoadingCloneStorages, setIsLoadingCloneStorages] = useState(false);
-  const [showCloneStorageSelection, setShowCloneStorageSelection] = useState(false);
+  const [showCloneStorageSelection, setShowCloneStorageSelection] =
+    useState(false);
   const [showCloneCountInput, setShowCloneCountInput] = useState(false);
-  const [cloneContainerType, setCloneContainerType] = useState<'lxc' | 'vm' | null>(null);
-  const [selectedCloneStorage, setSelectedCloneStorage] = useState<Storage | null>(null);
+  const [cloneContainerType, setCloneContainerType] = useState<
+    "lxc" | "vm" | null
+  >(null);
+  const [selectedCloneStorage, setSelectedCloneStorage] =
+    useState<Storage | null>(null);
   // cloneCount is passed as parameter to handleCloneCountSubmit, no need for state
+  const [silentUpdate, setSilentUpdate] = useState(false);
+  // Batch update queue
+  const [batchUpdateQueue, setBatchUpdateQueue] = useState<InstalledScript[]>(
+    [],
+  );
+  const [batchUpdateIndex, setBatchUpdateIndex] = useState(0);
+  const [isBatchUpdating, setIsBatchUpdating] = useState(false);
   const [editingScriptId, setEditingScriptId] = useState<number | null>(null);
   const [editFormData, setEditFormData] = useState<{
     script_name: string;
@@ -196,7 +256,11 @@ export function InstalledScriptsTab() {
         });
       },
       onError: (error) => {
-        alert(`Error updating script: ${error.message}`);
+        setErrorModal({
+          isOpen: true,
+          title: "Update Failed",
+          message: `Error updating script: ${error.message}`,
+        });
       },
     });
 
@@ -213,7 +277,11 @@ export function InstalledScriptsTab() {
         });
       },
       onError: (error) => {
-        alert(`Error creating script: ${error.message}`);
+        setErrorModal({
+          isOpen: true,
+          title: "Create Failed",
+          message: `Error creating script: ${error.message}`,
+        });
       },
     });
 
@@ -278,12 +346,21 @@ export function InstalledScriptsTab() {
           // For each script, find its container status
           currentScripts.forEach((script) => {
             if (script.container_id && data.statusMap) {
+              const scopedKey = script.server_id
+                ? `${script.server_id}:${script.container_id}`
+                : script.container_id;
               const containerStatus = (
                 data.statusMap as Record<
                   string,
                   "running" | "stopped" | "unknown"
                 >
-              )[script.container_id];
+              )[scopedKey] ??
+                (
+                  data.statusMap as Record<
+                    string,
+                    "running" | "stopped" | "unknown"
+                  >
+                )[script.container_id];
               if (containerStatus) {
                 statusMap.set(script.id, containerStatus);
               } else {
@@ -342,7 +419,6 @@ export function InstalledScriptsTab() {
   const autoDetectWebUIMutation =
     api.installedScripts.autoDetectWebUI.useMutation({
       onSuccess: (data) => {
-        console.log("✅ Auto-detect WebUI success:", data);
         void refetchScripts();
         setAutoDetectStatus({
           type: "success",
@@ -382,21 +458,12 @@ export function InstalledScriptsTab() {
       if (result.data?.success) {
         setBackupStorages(result.data.storages);
       } else {
-        setErrorModal({
-          isOpen: true,
-          title: "Failed to Fetch Storages",
-          message: result.data?.error ?? "Unknown error occurred",
-          type: "error",
-        });
+        // Let StorageSelectionModal's empty state handle the "no storages" case
+        setBackupStorages([]);
       }
-    } catch (error) {
-      setErrorModal({
-        isOpen: true,
-        title: "Failed to Fetch Storages",
-        message:
-          error instanceof Error ? error.message : "Unknown error occurred",
-        type: "error",
-      });
+    } catch {
+      // Let StorageSelectionModal handle the empty state
+      setBackupStorages([]);
     } finally {
       setIsLoadingStorages(false);
     }
@@ -412,12 +479,12 @@ export function InstalledScriptsTab() {
         setControllingScriptId(null);
 
         if (data.success) {
-          // Update container status immediately in UI for instant feedback
-          const newStatus =
-            variables.action === "start" ? "running" : "stopped";
+          // Restart/reboot → container goes back to running; start → running; stop → stopped
+          const newStatus: "running" | "stopped" =
+            variables.action === "stop" ? "stopped" : "running";
+
           setContainerStatuses((prev) => {
             const newMap = new Map(prev);
-            // Find the script ID for this container using the container ID from the response
             const currentScripts = scriptsRef.current;
             const script = currentScripts.find(
               (s) => s.container_id === data.containerId,
@@ -428,22 +495,25 @@ export function InstalledScriptsTab() {
             return newMap;
           });
 
-          // Show success modal
+          const actionLabel =
+            variables.action === "start"
+              ? "Started"
+              : variables.action === "stop"
+                ? "Stopped"
+                : variables.action === "restart"
+                  ? "Restarted"
+                  : "Rebooted";
+
           setErrorModal({
             isOpen: true,
-            title: `Container ${variables.action === "start" ? "Started" : "Stopped"}`,
+            title: `Container ${actionLabel}`,
             message:
               data.message ??
-              `Container has been ${variables.action === "start" ? "started" : "stopped"} successfully.`,
+              `Container has been ${actionLabel.toLowerCase()} successfully.`,
             details: undefined,
             type: "success",
           });
-
-          // Re-fetch status for all containers using bulk method (in background)
-          // Trigger status check by updating scripts length dependency
-          // This will be handled by the useEffect that watches scripts.length
         } else {
-          // Show error message from backend
           const errorMessage = data.error ?? "Unknown error occurred";
           setErrorModal({
             isOpen: true,
@@ -547,8 +617,6 @@ export function InstalledScriptsTab() {
 
   useEffect(() => {
     if (scripts.length > 0) {
-      console.log("Status check triggered - scripts length:", scripts.length);
-
       // Clear any existing timeout
       if (statusCheckTimeoutRef.current) {
         clearTimeout(statusCheckTimeoutRef.current);
@@ -558,7 +626,6 @@ export function InstalledScriptsTab() {
       statusCheckTimeoutRef.current = setTimeout(() => {
         // Prevent multiple simultaneous status checks
         if (containerStatusMutationRef.current.isPending) {
-          console.log("Status check already pending, skipping");
           return;
         }
 
@@ -573,7 +640,6 @@ export function InstalledScriptsTab() {
           ),
         ];
 
-        console.log("Executing status check for server IDs:", serverIds);
         if (serverIds.length > 0) {
           containerStatusMutationRef.current.mutate({ serverIds });
         }
@@ -590,102 +656,141 @@ export function InstalledScriptsTab() {
     };
   }, []);
 
-  const scriptsWithStatus = scripts.map((script) => ({
-    ...script,
-    container_status: script.container_id
-      ? (containerStatuses.get(script.id) ?? "unknown")
-      : undefined,
-  }));
+  const scriptsWithStatus = useMemo(
+    () =>
+      scripts.map((script) => ({
+        ...script,
+        container_status: script.container_id
+          ? (containerStatuses.get(script.id) ?? "unknown")
+          : undefined,
+      })),
+    [scripts, containerStatuses],
+  );
+
+  const statusCounts = useMemo(() => {
+    let runningLxc = 0;
+    let runningVm = 0;
+    let stoppedLxc = 0;
+    let stoppedVm = 0;
+    for (const s of scriptsWithStatus) {
+      if (s.container_status === "running") {
+        if (s.is_vm) runningVm++;
+        else runningLxc++;
+      } else if (s.container_status === "stopped") {
+        if (s.is_vm) stoppedVm++;
+        else stoppedLxc++;
+      }
+    }
+    return { runningLxc, runningVm, stoppedLxc, stoppedVm };
+  }, [scriptsWithStatus]);
 
   // Filter and sort scripts
-  const filteredScripts = scriptsWithStatus
-    .filter((script: InstalledScript) => {
-      const matchesSearch =
-        script.script_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (script.container_id?.includes(searchTerm) ?? false) ||
-        (script.server_name?.toLowerCase().includes(searchTerm.toLowerCase()) ??
-          false);
+  const filteredScripts = useMemo(
+    () =>
+      scriptsWithStatus
+        .filter((script: InstalledScript) => {
+          const matchesSearch =
+            script.script_name
+              .toLowerCase()
+              .includes(searchTerm.toLowerCase()) ||
+            (script.container_id?.includes(searchTerm) ?? false) ||
+            (script.server_name
+              ?.toLowerCase()
+              .includes(searchTerm.toLowerCase()) ??
+              false);
 
-      const matchesStatus =
-        statusFilter === "all" || script.status === statusFilter;
+          const matchesStatus =
+            statusFilter === "all" || script.status === statusFilter;
 
-      const matchesServer =
-        serverFilter === "all" ||
-        (serverFilter === "local" && !script.server_name) ||
-        script.server_name === serverFilter;
+          const matchesServer =
+            serverFilter === "all" ||
+            (serverFilter === "local" && !script.server_name) ||
+            script.server_name === serverFilter;
 
-      return matchesSearch && matchesStatus && matchesServer;
-    })
-    .sort((a: InstalledScript, b: InstalledScript) => {
-      // Default sorting: group by server, then by container ID
-      if (sortField === "server_name") {
-        const aServer = a.server_name ?? "Local";
-        const bServer = b.server_name ?? "Local";
+          return matchesSearch && matchesStatus && matchesServer;
+        })
+        .sort((a: InstalledScript, b: InstalledScript) => {
+          // Default sorting: group by server, then by container ID
+          if (sortField === "server_name") {
+            const aServer = a.server_name ?? "Local";
+            const bServer = b.server_name ?? "Local";
 
-        // First sort by server name
-        if (aServer !== bServer) {
-          return sortDirection === "asc"
-            ? aServer.localeCompare(bServer)
-            : bServer.localeCompare(aServer);
-        }
+            // First sort by server name
+            if (aServer !== bServer) {
+              return sortDirection === "asc"
+                ? aServer.localeCompare(bServer)
+                : bServer.localeCompare(aServer);
+            }
 
-        // If same server, sort by container ID
-        const aContainerId = a.container_id ?? "";
-        const bContainerId = b.container_id ?? "";
+            // If same server, sort by container ID
+            const aContainerId = a.container_id ?? "";
+            const bContainerId = b.container_id ?? "";
 
-        if (aContainerId !== bContainerId) {
-          // Convert to numbers for proper numeric sorting
-          const aNum = parseInt(aContainerId) || 0;
-          const bNum = parseInt(bContainerId) || 0;
-          return sortDirection === "asc" ? aNum - bNum : bNum - aNum;
-        }
+            if (aContainerId !== bContainerId) {
+              // Convert to numbers for proper numeric sorting
+              const aNum = parseInt(aContainerId) || 0;
+              const bNum = parseInt(bContainerId) || 0;
+              return sortDirection === "asc" ? aNum - bNum : bNum - aNum;
+            }
 
-        return 0;
-      }
+            return 0;
+          }
 
-      // For other sort fields, use the original logic
-      let aValue: any;
-      let bValue: any;
+          // For other sort fields, use the original logic
+          let aValue: any;
+          let bValue: any;
 
-      switch (sortField) {
-        case "script_name":
-          aValue = a.script_name.toLowerCase();
-          bValue = b.script_name.toLowerCase();
-          break;
-        case "container_id":
-          aValue = a.container_id ?? "";
-          bValue = b.container_id ?? "";
-          break;
-        case "status":
-          aValue = a.status;
-          bValue = b.status;
-          break;
-        case "installation_date":
-          aValue = new Date(a.installation_date).getTime();
-          bValue = new Date(b.installation_date).getTime();
-          break;
-        default:
+          switch (sortField) {
+            case "script_name":
+              aValue = a.script_name.toLowerCase();
+              bValue = b.script_name.toLowerCase();
+              break;
+            case "container_id":
+              aValue = a.container_id ?? "";
+              bValue = b.container_id ?? "";
+              break;
+            case "status":
+              aValue = a.status;
+              bValue = b.status;
+              break;
+            case "installation_date":
+              aValue = new Date(a.installation_date).getTime();
+              bValue = new Date(b.installation_date).getTime();
+              break;
+            default:
+              return 0;
+          }
+
+          if (aValue < bValue) {
+            return sortDirection === "asc" ? -1 : 1;
+          }
+          if (aValue > bValue) {
+            return sortDirection === "asc" ? 1 : -1;
+          }
           return 0;
-      }
-
-      if (aValue < bValue) {
-        return sortDirection === "asc" ? -1 : 1;
-      }
-      if (aValue > bValue) {
-        return sortDirection === "asc" ? 1 : -1;
-      }
-      return 0;
-    });
+        }),
+    [
+      scriptsWithStatus,
+      searchTerm,
+      statusFilter,
+      serverFilter,
+      sortField,
+      sortDirection,
+    ],
+  );
 
   // Get unique servers for filter
-  const uniqueServers: string[] = [];
-  const seen = new Set<string>();
-  for (const script of scripts) {
-    if (script.server_name && !seen.has(String(script.server_name))) {
-      uniqueServers.push(String(script.server_name));
-      seen.add(String(script.server_name));
+  const uniqueServers = useMemo(() => {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    for (const script of scripts) {
+      if (script.server_name && !seen.has(String(script.server_name))) {
+        result.push(String(script.server_name));
+        seen.add(String(script.server_name));
+      }
     }
-  }
+    return result;
+  }, [scripts]);
 
   const handleDeleteScript = (id: number, script?: InstalledScript) => {
     const scriptToDelete = script ?? scripts.find((s) => s.id === id);
@@ -706,12 +811,17 @@ export function InstalledScriptsTab() {
         },
       });
     } else {
-      // For non-SSH scripts or scripts without container_id, use simple confirm
-      if (
-        confirm("Are you sure you want to delete this installation record?")
-      ) {
-        void deleteScriptMutation.mutate({ id });
-      }
+      // For non-SSH scripts or scripts without container_id, use confirmation modal
+      setConfirmationModal({
+        isOpen: true,
+        variant: "simple",
+        title: "Delete Installation Record",
+        message: "Are you sure you want to delete this installation record?",
+        onConfirm: () => {
+          void deleteScriptMutation.mutate({ id });
+          setConfirmationModal(null);
+        },
+      });
     }
   };
 
@@ -721,7 +831,11 @@ export function InstalledScriptsTab() {
     action: "start" | "stop",
   ) => {
     if (!script.container_id) {
-      alert("No Container ID available for this script");
+      setErrorModal({
+        isOpen: true,
+        title: "No Container ID",
+        message: "No Container ID available for this script",
+      });
       return;
     }
 
@@ -744,9 +858,45 @@ export function InstalledScriptsTab() {
     });
   };
 
+  const handleRestart = (script: InstalledScript) => {
+    if (!script.container_id) {
+      setErrorModal({
+        isOpen: true,
+        title: "No Container ID",
+        message: "No Container ID available for this script",
+      });
+      return;
+    }
+
+    const containerType = script.is_vm ? "VM" : "LXC";
+    // VMs use qm reboot (graceful), LXC use pct restart
+    const action = script.is_vm ? ("reboot" as const) : ("restart" as const);
+    const label = script.is_vm ? "Reboot" : "Restart";
+
+    setConfirmationModal({
+      isOpen: true,
+      variant: "simple",
+      title: `${label} Container`,
+      message: `Are you sure you want to ${label.toLowerCase()} container ${script.container_id} (${script.script_name})?`,
+      onConfirm: () => {
+        setControllingScriptId(script.id);
+        setLoadingModal({
+          isOpen: true,
+          action: `${label}ing ${containerType}...`,
+        });
+        void controlContainerMutation.mutate({ id: script.id, action });
+        setConfirmationModal(null);
+      },
+    });
+  };
+
   const handleDestroy = (script: InstalledScript) => {
     if (!script.container_id) {
-      alert("No Container ID available for this script");
+      setErrorModal({
+        isOpen: true,
+        title: "No Container ID",
+        message: "No Container ID available for this script",
+      });
       return;
     }
 
@@ -845,20 +995,10 @@ export function InstalledScriptsTab() {
     storageName: string,
   ) => {
     // Get server info
-    let server = null;
-    if (script.server_id && script.server_user) {
-      server = {
-        id: script.server_id,
-        name: script.server_name,
-        ip: script.server_ip,
-        user: script.server_user,
-        password: script.server_password,
-        auth_type: script.server_auth_type ?? "password",
-        ssh_key: script.server_ssh_key,
-        ssh_key_passphrase: script.server_ssh_key_passphrase,
-        ssh_port: script.server_ssh_port ?? 22,
-      };
-    }
+    const server =
+      script.server_id && script.server_user
+        ? buildServerFromScript(script)
+        : undefined;
 
     // Start backup terminal
     setUpdatingScript({
@@ -879,20 +1019,10 @@ export function InstalledScriptsTab() {
     if (!pendingUpdateScript) return;
 
     // Get server info if it's SSH mode
-    let server = null;
-    if (pendingUpdateScript.server_id && pendingUpdateScript.server_user) {
-      server = {
-        id: pendingUpdateScript.server_id,
-        name: pendingUpdateScript.server_name,
-        ip: pendingUpdateScript.server_ip,
-        user: pendingUpdateScript.server_user,
-        password: pendingUpdateScript.server_password,
-        auth_type: pendingUpdateScript.server_auth_type ?? "password",
-        ssh_key: pendingUpdateScript.server_ssh_key,
-        ssh_key_passphrase: pendingUpdateScript.server_ssh_key_passphrase,
-        ssh_port: pendingUpdateScript.server_ssh_port ?? 22,
-      };
-    }
+    const server =
+      pendingUpdateScript.server_id && pendingUpdateScript.server_user
+        ? buildServerFromScript(pendingUpdateScript)
+        : undefined;
 
     setUpdatingScript({
       id: pendingUpdateScript.id,
@@ -900,15 +1030,66 @@ export function InstalledScriptsTab() {
       server: server,
       backupStorage: backupStorage ?? undefined,
       isBackupOnly: false, // Explicitly set to false for update operations
+      envVars: silentUpdate ? { PHS_SILENT: "1" } : undefined,
     });
 
     // Reset state
     setPendingUpdateScript(null);
     setBackupStorages([]);
+    setSilentUpdate(false);
   };
 
   const handleCloseUpdateTerminal = () => {
     setUpdatingScript(null);
+    // If batch updating, advance to next script
+    if (isBatchUpdating) {
+      const nextIndex = batchUpdateIndex + 1;
+      if (nextIndex < batchUpdateQueue.length) {
+        setBatchUpdateIndex(nextIndex);
+        startBatchUpdateFor(batchUpdateQueue[nextIndex]!);
+      } else {
+        // Batch complete
+        setIsBatchUpdating(false);
+        setBatchUpdateQueue([]);
+        setBatchUpdateIndex(0);
+        void refetchScripts();
+      }
+    }
+  };
+
+  const startBatchUpdateFor = (script: InstalledScript) => {
+    const server =
+      script.server_id && script.server_user
+        ? buildServerFromScript(script)
+        : undefined;
+    setUpdatingScript({
+      id: script.id,
+      containerId: script.container_id!,
+      server,
+      isBackupOnly: false,
+      envVars: { PHS_SILENT: "1" },
+    });
+  };
+
+  const handleBatchUpdateAll = () => {
+    const updatable = scripts.filter(
+      (s) => s.container_id && s.status === "success",
+    );
+    if (updatable.length === 0) return;
+    setConfirmationModal({
+      isOpen: true,
+      title: "Batch Update All",
+      message: `This will silently update ${updatable.length} container(s) sequentially. Each update will run with PHS_SILENT=1 (no user prompts).\n\nDo you want to proceed?`,
+      variant: "danger",
+      confirmButtonText: "Update All",
+      onConfirm: () => {
+        setConfirmationModal(null);
+        setBatchUpdateQueue(updatable);
+        setBatchUpdateIndex(0);
+        setIsBatchUpdating(true);
+        startBatchUpdateFor(updatable[0]!);
+      },
+    });
   };
 
   const handleBackupScript = (script: InstalledScript) => {
@@ -943,42 +1124,47 @@ export function InstalledScriptsTab() {
 
   // Clone queries
 
-  const getContainerHostnameQuery = api.installedScripts.getContainerHostname.useQuery(
-    { 
-      containerId: pendingCloneScript?.container_id ?? '', 
-      serverId: pendingCloneScript?.server_id ?? 0,
-      containerType: cloneContainerType ?? 'lxc'
-    },
-    { enabled: false }
-  );
+  const getContainerHostnameQuery =
+    api.installedScripts.getContainerHostname.useQuery(
+      {
+        containerId: pendingCloneScript?.container_id ?? "",
+        serverId: pendingCloneScript?.server_id ?? 0,
+        containerType: cloneContainerType ?? "lxc",
+      },
+      { enabled: false },
+    );
 
   const executeCloneMutation = api.installedScripts.executeClone.useMutation();
   const utils = api.useUtils();
 
-  const fetchCloneStorages = async (serverId: number, _forceRefresh = false) => {
+  const fetchCloneStorages = async (
+    serverId: number,
+    _forceRefresh = false,
+  ) => {
     setIsLoadingCloneStorages(true);
     try {
       // Use utils.fetch to call with the correct serverId
       const result = await utils.installedScripts.getCloneStorages.fetch({
         serverId,
-        forceRefresh: _forceRefresh
+        forceRefresh: _forceRefresh,
       });
       if (result?.success && result.storages) {
         setCloneStorages(result.storages as Storage[]);
       } else {
         setErrorModal({
           isOpen: true,
-          title: 'Failed to Fetch Storages',
-          message: result?.error ?? 'Unknown error occurred',
-          type: 'error'
+          title: "Failed to Fetch Storages",
+          message: result?.error ?? "Unknown error occurred",
+          type: "error",
         });
       }
     } catch (error) {
       setErrorModal({
         isOpen: true,
-        title: 'Failed to Fetch Storages',
-        message: error instanceof Error ? error.message : 'Unknown error occurred',
-        type: 'error'
+        title: "Failed to Fetch Storages",
+        message:
+          error instanceof Error ? error.message : "Unknown error occurred",
+        type: "error",
       });
     } finally {
       setIsLoadingCloneStorages(false);
@@ -989,9 +1175,10 @@ export function InstalledScriptsTab() {
     if (!script.container_id) {
       setErrorModal({
         isOpen: true,
-        title: 'Clone Failed',
-        message: 'No Container ID available for this script',
-        details: 'This script does not have a valid container ID and cannot be cloned.'
+        title: "Clone Failed",
+        message: "No Container ID available for this script",
+        details:
+          "This script does not have a valid container ID and cannot be cloned.",
       });
       return;
     }
@@ -999,21 +1186,22 @@ export function InstalledScriptsTab() {
     if (!script.server_id) {
       setErrorModal({
         isOpen: true,
-        title: 'Clone Not Available',
-        message: 'Clone is only available for SSH scripts with a configured server.',
-        type: 'error'
+        title: "Clone Not Available",
+        message:
+          "Clone is only available for SSH scripts with a configured server.",
+        type: "error",
       });
       return;
     }
 
     // Store the script and determine container type using is_vm property
     setPendingCloneScript(script);
-    
+
     // Use is_vm property from batch detection (from main branch)
     // If not available, default to LXC
-    const containerType = script.is_vm ? 'vm' : 'lxc';
+    const containerType = script.is_vm ? "vm" : "lxc";
     setCloneContainerType(containerType);
-    
+
     // Fetch storages and show selection modal
     void fetchCloneStorages(script.server_id, false);
     setShowCloneStorageSelection(true);
@@ -1031,9 +1219,9 @@ export function InstalledScriptsTab() {
     if (!pendingCloneScript || !cloneContainerType) {
       setErrorModal({
         isOpen: true,
-        title: 'Clone Failed',
-        message: 'Missing required information for cloning.',
-        type: 'error'
+        title: "Clone Failed",
+        message: "Missing required information for cloning.",
+        type: "error",
       });
       return;
     }
@@ -1045,9 +1233,9 @@ export function InstalledScriptsTab() {
       if (!hostnameResult.data?.success || !hostnameResult.data.hostname) {
         setErrorModal({
           isOpen: true,
-          title: 'Clone Failed',
-          message: 'Could not retrieve container hostname.',
-          type: 'error'
+          title: "Clone Failed",
+          message: "Could not retrieve container hostname.",
+          type: "error",
         });
         return;
       }
@@ -1055,19 +1243,21 @@ export function InstalledScriptsTab() {
       const originalHostname = hostnameResult.data.hostname;
 
       // Generate clone hostnames using utils to call with originalHostname
-      const hostnamesResult = await utils.installedScripts.generateCloneHostnames.fetch({
-        originalHostname,
-        containerType: cloneContainerType ?? 'lxc',
-        serverId: pendingCloneScript.server_id!,
-        count
-      });
+      const hostnamesResult =
+        await utils.installedScripts.generateCloneHostnames.fetch({
+          originalHostname,
+          containerType: cloneContainerType ?? "lxc",
+          serverId: pendingCloneScript.server_id!,
+          count,
+        });
 
       if (!hostnamesResult?.success || !hostnamesResult.hostnames.length) {
         setErrorModal({
           isOpen: true,
-          title: 'Clone Failed',
-          message: hostnamesResult?.error ?? 'Could not generate clone hostnames.',
-          type: 'error'
+          title: "Clone Failed",
+          message:
+            hostnamesResult?.error ?? "Could not generate clone hostnames.",
+          type: "error",
         });
         return;
       }
@@ -1081,31 +1271,24 @@ export function InstalledScriptsTab() {
         storage: selectedCloneStorage!.name,
         cloneCount: count,
         hostnames: hostnames,
-        containerType: cloneContainerType
+        containerType: cloneContainerType,
       });
 
       if (!cloneResult.success || !cloneResult.executionId) {
         setErrorModal({
           isOpen: true,
-          title: 'Clone Failed',
-          message: cloneResult.error ?? 'Failed to start clone operation.',
-          type: 'error'
+          title: "Clone Failed",
+          message: cloneResult.error ?? "Failed to start clone operation.",
+          type: "error",
         });
         return;
       }
 
       // Get server info for websocket
-      const server = pendingCloneScript.server_id && pendingCloneScript.server_user ? {
-        id: pendingCloneScript.server_id,
-        name: pendingCloneScript.server_name,
-        ip: pendingCloneScript.server_ip,
-        user: pendingCloneScript.server_user,
-        password: pendingCloneScript.server_password,
-        auth_type: pendingCloneScript.server_auth_type ?? 'password',
-        ssh_key: pendingCloneScript.server_ssh_key,
-        ssh_key_passphrase: pendingCloneScript.server_ssh_key_passphrase,
-        ssh_port: pendingCloneScript.server_ssh_port ?? 22,
-      } : null;
+      const server =
+        pendingCloneScript.server_id && pendingCloneScript.server_user
+          ? buildServerFromScript(pendingCloneScript)
+          : undefined;
 
       // Set up terminal for clone execution
       setUpdatingScript({
@@ -1117,7 +1300,7 @@ export function InstalledScriptsTab() {
         cloneCount: count,
         hostnames: hostnames,
         containerType: cloneContainerType,
-        storage: selectedCloneStorage!.name
+        storage: selectedCloneStorage!.name,
       });
 
       // Reset clone state
@@ -1129,9 +1312,10 @@ export function InstalledScriptsTab() {
     } catch (error) {
       setErrorModal({
         isOpen: true,
-        title: 'Clone Failed',
-        message: error instanceof Error ? error.message : 'Unknown error occurred',
-        type: 'error'
+        title: "Clone Failed",
+        message:
+          error instanceof Error ? error.message : "Unknown error occurred",
+        type: "error",
       });
     }
   };
@@ -1149,26 +1333,16 @@ export function InstalledScriptsTab() {
     }
 
     // Get server info if it's SSH mode
-    let server = null;
-    if (script.server_id && script.server_user) {
-      server = {
-        id: script.server_id,
-        name: script.server_name,
-        ip: script.server_ip,
-        user: script.server_user,
-        password: script.server_password,
-        auth_type: script.server_auth_type ?? "password",
-        ssh_key: script.server_ssh_key,
-        ssh_key_passphrase: script.server_ssh_key_passphrase,
-        ssh_port: script.server_ssh_port ?? 22,
-      };
-    }
+    const server =
+      script.server_id && script.server_user
+        ? buildServerFromScript(script)
+        : undefined;
 
     setOpeningShell({
       id: script.id,
       containerId: script.container_id,
       server: server,
-      containerType: script.is_vm ? 'vm' : 'lxc',
+      containerType: script.is_vm ? "vm" : "lxc",
     });
   };
 
@@ -1176,56 +1350,55 @@ export function InstalledScriptsTab() {
     setOpeningShell(null);
   };
 
-  // Auto-scroll to terminals when they open
-  useEffect(() => {
-    if (openingShell) {
-      // Small delay to ensure the terminal is rendered
-      setTimeout(() => {
-        const terminalElement = document.querySelector(
-          '[data-terminal="shell"]',
-        );
-        if (terminalElement) {
-          // Scroll to the terminal with smooth animation
-          terminalElement.scrollIntoView({
-            behavior: "smooth",
-            block: "start",
-            inline: "nearest",
-          });
-
-          // Add a subtle highlight effect
-          terminalElement.classList.add("animate-pulse");
-          setTimeout(() => {
-            terminalElement.classList.remove("animate-pulse");
-          }, 2000);
-        }
-      }, 200);
-    }
-  }, [openingShell]);
+  // Auto-scroll useEffect for shell removed — shell now renders as FloatingShell dialog
 
   useEffect(() => {
-    if (updatingScript) {
-      // Small delay to ensure the terminal is rendered
-      setTimeout(() => {
-        const terminalElement = document.querySelector(
-          '[data-terminal="update"]',
-        );
-        if (terminalElement) {
-          // Scroll to the terminal with smooth animation
-          terminalElement.scrollIntoView({
-            behavior: "smooth",
-            block: "start",
-            inline: "nearest",
-          });
+    if (!updatingScript) return;
 
-          // Add a subtle highlight effect
-          terminalElement.classList.add("animate-pulse");
-          setTimeout(() => {
-            terminalElement.classList.remove("animate-pulse");
-          }, 2000);
-        }
-      }, 200);
-    }
-  }, [updatingScript]);
+    const scriptPath = updatingScript.isClone
+      ? `clone-${updatingScript.containerId}`
+      : updatingScript.isBackupOnly
+        ? `backup-${updatingScript.containerId}`
+        : `update-${updatingScript.containerId}`;
+
+    openShell({
+      sessionKey: `installed-task-${updatingScript.executionId ?? `${updatingScript.id}-${Date.now()}`}`,
+      title: updatingScript.isClone
+        ? `Clone CT/VM ${updatingScript.containerId}`
+        : updatingScript.isBackupOnly
+          ? `Backup CT ${updatingScript.containerId}`
+          : `Update CT ${updatingScript.containerId}`,
+      containerId: updatingScript.containerId,
+      containerType: updatingScript.containerType ?? "lxc",
+      terminal: {
+        scriptPath,
+        mode: updatingScript.server ? "ssh" : "local",
+        server: updatingScript.server,
+        isUpdate: !updatingScript.isBackupOnly && !updatingScript.isClone,
+        isBackup: updatingScript.isBackupOnly,
+        isClone: updatingScript.isClone,
+        containerId: updatingScript.containerId,
+        executionId: updatingScript.executionId,
+        cloneCount: updatingScript.cloneCount,
+        hostnames: updatingScript.hostnames,
+        containerType: updatingScript.containerType,
+        storage: updatingScript.isClone
+          ? updatingScript.storage
+          : updatingScript.isBackupOnly
+            ? updatingScript.backupStorage
+            : undefined,
+        backupStorage:
+          !updatingScript.isBackupOnly && !updatingScript.isClone
+            ? updatingScript.backupStorage
+            : undefined,
+        envVars: updatingScript.envVars,
+      },
+      onComplete: handleCloseUpdateTerminal,
+    });
+
+    // Prevent re-opening the same session on each render.
+    setUpdatingScript(null);
+  }, [updatingScript, openShell]);
 
   const handleEditScript = (script: InstalledScript) => {
     setEditingScriptId(script.id);
@@ -1297,7 +1470,11 @@ export function InstalledScriptsTab() {
 
   const handleAddScript = () => {
     if (!addFormData.script_name.trim()) {
-      alert("Script name is required");
+      setErrorModal({
+        isOpen: true,
+        title: "Validation Error",
+        message: "Script name is required",
+      });
       return;
     }
 
@@ -1354,16 +1531,7 @@ export function InstalledScriptsTab() {
   };
 
   const handleAutoDetectWebUI = (script: InstalledScript) => {
-    console.log("🔍 Auto-detect WebUI clicked for script:", script);
-    console.log("Script validation:", {
-      hasContainerId: !!script.container_id,
-      isSSHMode: script.execution_mode === "ssh",
-      containerId: script.container_id,
-      executionMode: script.execution_mode,
-    });
-
     if (!script.container_id || script.execution_mode !== "ssh") {
-      console.log("❌ Auto-detect validation failed");
       setErrorModal({
         isOpen: true,
         title: "Auto-Detect Failed",
@@ -1375,10 +1543,6 @@ export function InstalledScriptsTab() {
       return;
     }
 
-    console.log(
-      "✅ Calling autoDetectWebUIMutation.mutate with id:",
-      script.id,
-    );
     autoDetectWebUIMutation.mutate({ id: script.id });
   };
 
@@ -1399,174 +1563,87 @@ export function InstalledScriptsTab() {
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
-  // Helper function to check if a script has any actions available
-  const hasActions = (script: InstalledScript) => {
-    if (script.container_id && script.execution_mode === "ssh") return true;
-    if (script.web_ui_ip != null) return true;
-    if (!script.container_id || script.execution_mode !== "ssh") return true;
-    return false;
-  };
-
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString();
   };
 
   if (isLoading) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="text-muted-foreground">
-          Loading installed scripts...
-        </div>
+      <div className="flex h-64 flex-col items-center justify-center gap-3">
+        <Loader2 className="text-primary h-8 w-8 animate-spin" />
+        <p className="text-muted-foreground text-sm">
+          Loading installed scripts…
+        </p>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Update Terminal */}
-      {updatingScript && (
-        <div className="mb-8" data-terminal="update">
-          <Terminal
-            scriptPath={
-              updatingScript.isClone 
-                ? `clone-${updatingScript.containerId}`
-                : updatingScript.isBackupOnly
-                ? `backup-${updatingScript.containerId}`
-                : `update-${updatingScript.containerId}`
-            }
-            onClose={handleCloseUpdateTerminal}
-            mode={updatingScript.server ? "ssh" : "local"}
-            server={updatingScript.server}
-            isUpdate={!updatingScript.isBackupOnly && !updatingScript.isClone}
-            isBackup={updatingScript.isBackupOnly}
-            isClone={updatingScript.isClone}
-            containerId={updatingScript.containerId}
-            executionId={updatingScript.executionId}
-            cloneCount={updatingScript.cloneCount}
-            hostnames={updatingScript.hostnames}
-            containerType={updatingScript.containerType}
-            storage={updatingScript.isClone ? updatingScript.storage : (updatingScript.isBackupOnly ? updatingScript.backupStorage : undefined)}
-            backupStorage={!updatingScript.isBackupOnly && !updatingScript.isClone ? updatingScript.backupStorage : undefined}
-          />
-        </div>
-      )}
-
-      {/* Shell Terminal */}
-      {openingShell && (
-        <div className="mb-8" data-terminal="shell">
-          {openingShell.containerType === 'vm' && (
-            <p className="text-muted-foreground mb-2 text-sm">
-              VM shell uses the Proxmox serial console. The VM must have a
-              serial port configured (e.g. <code className="bg-muted rounded px-1">qm set {openingShell.containerId} -serial0 socket</code>).
-              Detach with <kbd className="bg-muted rounded px-1">Ctrl+O</kbd>.
-            </p>
-          )}
-          <Terminal
-            scriptPath={`shell-${openingShell.containerId}`}
-            onClose={handleCloseShellTerminal}
-            mode={openingShell.server ? "ssh" : "local"}
-            server={openingShell.server}
-            isShell={true}
-            containerId={openingShell.containerId}
-            containerType={openingShell.containerType}
-          />
-        </div>
-      )}
+      {/* Shell Terminal — now rendered as FloatingShell dialog (see ShellContext) */}
 
       {/* Header with Stats */}
-      <div className="bg-card rounded-lg p-6 shadow">
-        <h2 className="text-foreground mb-4 text-2xl font-bold">
-          Installed Scripts
-        </h2>
+      <div className="bg-card border-border rounded-lg border p-6 shadow-sm">
+        {/* Title row */}
+        <div className="mb-6 flex items-center gap-3">
+          <div className="bg-primary/10 rounded-lg p-2">
+            <FolderOpen className="text-primary h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-foreground text-xl font-bold">
+              Installed Scripts
+            </h2>
+            <p className="text-muted-foreground text-sm">
+              Manage containers, run updates, and control services
+            </p>
+          </div>
+        </div>
 
         {stats && (
-          <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3 lg:grid-cols-5">
-            <div className="bg-info/10 border-info/20 rounded-lg border p-4 text-center">
-              <div className="text-info text-2xl font-bold">{stats.total}</div>
-              <div className="text-info/80 text-sm">Total Installations</div>
-            </div>
-            <div className="bg-success/10 border-success/20 rounded-lg border p-4 text-center">
-              <div className="text-success text-2xl font-bold">
-                {
-                  scriptsWithStatus.filter(
-                    (script) =>
-                      script.container_status === "running" && !script.is_vm,
-                  ).length
-                }
-              </div>
-              <div className="text-success/80 text-sm">Running LXC</div>
-            </div>
-            <div className="bg-success/10 border-success/20 rounded-lg border p-4 text-center">
-              <div className="text-success text-2xl font-bold">
-                {
-                  scriptsWithStatus.filter(
-                    (script) =>
-                      script.container_status === "running" && script.is_vm,
-                  ).length
-                }
-              </div>
-              <div className="text-success/80 text-sm">Running VMs</div>
-            </div>
-            <div className="bg-error/10 border-error/20 rounded-lg border p-4 text-center">
-              <div className="text-error text-2xl font-bold">
-                {
-                  scriptsWithStatus.filter(
-                    (script) =>
-                      script.container_status === "stopped" && !script.is_vm,
-                  ).length
-                }
-              </div>
-              <div className="text-error/80 text-sm">Stopped LXC</div>
-            </div>
-            <div className="bg-error/10 border-error/20 rounded-lg border p-4 text-center">
-              <div className="text-error text-2xl font-bold">
-                {
-                  scriptsWithStatus.filter(
-                    (script) =>
-                      script.container_status === "stopped" && script.is_vm,
-                  ).length
-                }
-              </div>
-              <div className="text-error/80 text-sm">Stopped VMs</div>
-            </div>
-          </div>
+          <InstalledScriptsStats
+            total={stats.total}
+            runningLxc={statusCounts.runningLxc}
+            runningVm={statusCounts.runningVm}
+            stoppedLxc={statusCounts.stoppedLxc}
+            stoppedVm={statusCounts.stoppedVm}
+          />
         )}
 
-        {/* Add Script and Auto-Detect Buttons */}
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row">
+        {/* Action Toolbar */}
+        <div className="mb-4 flex flex-wrap gap-2">
           <Button
             onClick={() => setShowAddForm(!showAddForm)}
             variant={showAddForm ? "outline" : "default"}
-            size="default"
+            size="sm"
+            className="gap-2"
           >
-            {showAddForm ? "Cancel Add Script" : "+ Add Manual Script Entry"}
+            <Plus className="h-4 w-4" />
+            {showAddForm ? "Cancel" : "Add Script"}
           </Button>
           <Button
             onClick={() => setShowAutoDetectForm(!showAutoDetectForm)}
             variant={showAutoDetectForm ? "outline" : "secondary"}
-            size="default"
+            size="sm"
+            className="gap-2"
           >
-            {showAutoDetectForm
-              ? "Cancel Auto-Detect"
-              : '🔍 Auto-Detect Containers & VMs (tag: community-script)'}
+            <ScanSearch className="h-4 w-4" />
+            {showAutoDetectForm ? "Cancel Auto-Detect" : "Auto-Detect"}
           </Button>
           <Button
             onClick={() => {
-              cleanupRunRef.current = false; // Allow cleanup to run again
+              cleanupRunRef.current = false;
               void cleanupMutation.mutate();
             }}
             disabled={cleanupMutation.isPending}
             variant="outline"
-            size="default"
-            className="border-warning/30 text-warning hover:bg-warning/10"
+            size="sm"
+            className="border-warning/30 text-warning hover:bg-warning/10 gap-2"
           >
-            {cleanupMutation.isPending
-              ? "🧹 Cleaning up..."
-              : "🧹 Cleanup Orphaned Scripts"}
+            <Eraser className="h-4 w-4" />
+            {cleanupMutation.isPending ? "Cleaning…" : "Cleanup Orphaned"}
           </Button>
           <Button
             onClick={() => {
-              // Trigger status check by calling the mutation directly
               const serverIds = [
                 ...new Set(
                   scripts
@@ -1580,24 +1657,42 @@ export function InstalledScriptsTab() {
             }}
             disabled={containerStatusMutation.isPending ?? scripts.length === 0}
             variant="outline"
-            size="default"
+            size="sm"
+            className="gap-2"
           >
-            {containerStatusMutation.isPending
-              ? "🔄 Checking..."
-              : "🔄 Refresh Container Status"}
+            <RefreshCw
+              className={`h-4 w-4 ${containerStatusMutation.isPending ? "animate-spin" : ""}`}
+            />
+            {containerStatusMutation.isPending ? "Checking…" : "Refresh Status"}
+          </Button>
+          <Button
+            onClick={handleBatchUpdateAll}
+            disabled={
+              isBatchUpdating ||
+              scripts.filter((s) => s.container_id && s.status === "success")
+                .length === 0
+            }
+            variant="outline"
+            size="sm"
+            className="border-primary/30 text-primary hover:bg-primary/10 gap-2"
+          >
+            <UploadCloud className="h-4 w-4" />
+            {isBatchUpdating
+              ? `Updating ${batchUpdateIndex + 1}/${batchUpdateQueue.length}…`
+              : "Update All"}
           </Button>
         </div>
 
         {/* Add Script Form */}
         {showAddForm && (
-          <div className="bg-card border-border mb-6 rounded-lg border p-4 shadow-sm sm:p-6">
-            <h3 className="text-foreground mb-4 text-lg font-semibold sm:mb-6">
+          <div className="border-border mb-4 rounded-lg border p-4 shadow-sm sm:p-6">
+            <h3 className="text-foreground mb-4 text-base font-semibold">
               Add Manual Script Entry
             </h3>
-            <div className="space-y-4 sm:space-y-6">
-              <div className="space-y-2">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
                 <label className="text-foreground block text-sm font-medium">
-                  Script Name *
+                  Script Name <span className="text-error">*</span>
                 </label>
                 <input
                   type="text"
@@ -1605,11 +1700,11 @@ export function InstalledScriptsTab() {
                   onChange={(e) =>
                     handleAddFormChange("script_name", e.target.value)
                   }
-                  className="border-input bg-background text-foreground placeholder:text-muted-foreground focus:ring-ring focus:border-ring w-full rounded-md border px-3 py-2 focus:ring-2 focus:outline-none"
-                  placeholder="Enter script name"
+                  className="border-input bg-background text-foreground placeholder:text-muted-foreground focus:ring-ring focus:border-ring w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+                  placeholder="e.g. my-container"
                 />
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <label className="text-foreground block text-sm font-medium">
                   Container ID
                 </label>
@@ -1619,11 +1714,11 @@ export function InstalledScriptsTab() {
                   onChange={(e) =>
                     handleAddFormChange("container_id", e.target.value)
                   }
-                  className="border-input bg-background text-foreground placeholder:text-muted-foreground focus:ring-ring focus:border-ring w-full rounded-md border px-3 py-2 focus:ring-2 focus:outline-none"
-                  placeholder="Enter container ID"
+                  className="border-input bg-background text-foreground placeholder:text-muted-foreground focus:ring-ring focus:border-ring w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+                  placeholder="e.g. 100"
                 />
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <label className="text-foreground block text-sm font-medium">
                   Server
                 </label>
@@ -1632,9 +1727,9 @@ export function InstalledScriptsTab() {
                   onChange={(e) =>
                     handleAddFormChange("server_id", e.target.value)
                   }
-                  className="border-input bg-background text-foreground focus:ring-ring focus:border-ring w-full rounded-md border px-3 py-2 focus:ring-2 focus:outline-none"
+                  className="border-input bg-background text-foreground focus:ring-ring focus:border-ring w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                 >
-                  <option value="local">Select Server</option>
+                  <option value="local">Local</option>
                   {serversData?.servers?.map((server: any) => (
                     <option key={server.id} value={server.id}>
                       {server.name}
@@ -1643,23 +1738,17 @@ export function InstalledScriptsTab() {
                 </select>
               </div>
             </div>
-            <div className="mt-4 flex flex-col justify-end gap-3 sm:mt-6 sm:flex-row">
-              <Button
-                onClick={handleCancelAdd}
-                variant="outline"
-                size="default"
-                className="w-full sm:w-auto"
-              >
+            <div className="mt-4 flex justify-end gap-2">
+              <Button onClick={handleCancelAdd} variant="outline" size="sm">
                 Cancel
               </Button>
               <Button
                 onClick={handleAddScript}
                 disabled={createScriptMutation.isPending}
                 variant="default"
-                size="default"
-                className="w-full sm:w-auto"
+                size="sm"
               >
-                {createScriptMutation.isPending ? "Adding..." : "Add Script"}
+                {createScriptMutation.isPending ? "Adding…" : "Add Script"}
               </Button>
             </div>
           </div>
@@ -1668,165 +1757,52 @@ export function InstalledScriptsTab() {
         {/* Status Messages */}
         {(autoDetectStatus.type ?? cleanupStatus.type) && (
           <div className="mb-4 space-y-2">
-            {/* Auto-Detect Status Message */}
-            {autoDetectStatus.type && (
-              <div
-                className={`rounded-lg border p-4 ${
-                  autoDetectStatus.type === "success"
-                    ? "bg-success/10 border-success/20"
-                    : "bg-error/10 border-error/20"
-                }`}
-              >
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    {autoDetectStatus.type === "success" ? (
-                      <svg
-                        className="text-success h-5 w-5"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    ) : (
-                      <svg
-                        className="text-error h-5 w-5"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    )}
-                  </div>
-                  <div className="ml-3">
-                    <p
-                      className={`text-sm font-medium ${
-                        autoDetectStatus.type === "success"
-                          ? "text-success-foreground"
-                          : "text-error-foreground"
-                      }`}
-                    >
-                      {autoDetectStatus.message}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Cleanup Status Message */}
-            {cleanupStatus.type && (
-              <div
-                className={`rounded-lg border p-4 ${
-                  cleanupStatus.type === "success"
-                    ? "bg-muted/50 border-muted"
-                    : "bg-error/10 border-error/20"
-                }`}
-              >
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    {cleanupStatus.type === "success" ? (
-                      <svg
-                        className="text-muted-foreground h-5 w-5"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    ) : (
-                      <svg
-                        className="text-error h-5 w-5"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    )}
-                  </div>
-                  <div className="ml-3">
-                    <p
-                      className={`text-sm font-medium ${
-                        cleanupStatus.type === "success"
-                          ? "text-foreground"
-                          : "text-error-foreground"
-                      }`}
-                    >
-                      {cleanupStatus.message}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
+            <StatusMessage
+              type={autoDetectStatus.type}
+              message={autoDetectStatus.message}
+            />
+            <StatusMessage
+              type={cleanupStatus.type}
+              message={cleanupStatus.message}
+              variant="info"
+            />
           </div>
         )}
 
         {/* Auto-Detect Containers & VMs Form */}
         {showAutoDetectForm && (
-          <div className="bg-card border-border mb-6 rounded-lg border p-4 shadow-sm sm:p-6">
-            <h3 className="text-foreground mb-4 text-lg font-semibold sm:mb-6">
-              Auto-Detect Containers &amp; VMs (tag: community-script)
+          <div className="border-border mb-4 rounded-lg border p-4 shadow-sm sm:p-6">
+            <h3 className="text-foreground mb-4 text-base font-semibold">
+              Auto-Detect Containers &amp; VMs
             </h3>
-            <div className="space-y-4 sm:space-y-6">
-              <div className="bg-muted/30 border-muted rounded-lg border p-4">
-                <div className="flex items-start">
-                  <div className="flex-shrink-0">
-                    <svg
-                      className="text-muted-foreground h-5 w-5"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </div>
-                  <div className="ml-3">
-                    <h4 className="text-foreground text-sm font-medium">
-                      How it works
-                    </h4>
-                    <div className="text-muted-foreground mt-2 text-sm">
-                      <p>This feature will:</p>
-                      <ul className="mt-1 list-inside list-disc space-y-1">
-                        <li>Connect to the selected server via SSH</li>
-                        <li>Scan LXC configs in /etc/pve/lxc/ and VM configs in /etc/pve/qemu-server/</li>
-                        <li>
-                          Find containers and VMs with &quot;community-script&quot; in
-                          their tags
-                        </li>
-                        <li>Extract the container/VM ID and hostname or name</li>
-                        <li>Add them as installed script entries</li>
-                      </ul>
-                    </div>
-                  </div>
+            <div className="space-y-4">
+              <div className="bg-muted/40 border-border flex items-start gap-3 rounded-lg border p-4">
+                <Info className="text-muted-foreground mt-0.5 h-4 w-4 flex-shrink-0" />
+                <div className="text-muted-foreground text-sm">
+                  <p className="font-medium">How it works</p>
+                  <ul className="mt-1 list-inside list-disc space-y-0.5">
+                    <li>Connects via SSH and scans LXC &amp; VM configs</li>
+                    <li>
+                      Finds containers tagged{" "}
+                      <code className="bg-muted rounded px-1">
+                        community-script
+                      </code>
+                    </li>
+                    <li>Adds matching entries to the installed scripts list</li>
+                  </ul>
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <label className="text-foreground block text-sm font-medium">
-                  Select Server *
+                  Select Server <span className="text-error">*</span>
                 </label>
                 <select
                   value={autoDetectServerId}
                   onChange={(e) => setAutoDetectServerId(e.target.value)}
-                  className="border-input bg-background text-foreground focus:ring-ring focus:border-ring w-full rounded-md border px-3 py-2 focus:ring-2 focus:outline-none"
+                  className="border-input bg-background text-foreground focus:ring-ring focus:border-ring w-full rounded-md border px-3 py-2 text-sm focus:ring-2 focus:outline-none sm:w-80"
                 >
-                  <option value="">Choose a server...</option>
+                  <option value="">Choose a server…</option>
                   {serversData?.servers?.map((server: any) => (
                     <option key={server.id} value={server.id}>
                       {server.name} ({server.ip})
@@ -1835,12 +1811,11 @@ export function InstalledScriptsTab() {
                 </select>
               </div>
             </div>
-            <div className="mt-4 flex flex-col justify-end gap-3 sm:mt-6 sm:flex-row">
+            <div className="mt-4 flex justify-end gap-2">
               <Button
                 onClick={handleCancelAutoDetect}
                 variant="outline"
-                size="default"
-                className="w-full sm:w-auto"
+                size="sm"
               >
                 Cancel
               </Button>
@@ -1848,75 +1823,42 @@ export function InstalledScriptsTab() {
                 onClick={handleAutoDetect}
                 disabled={autoDetectMutation.isPending ?? !autoDetectServerId}
                 variant="default"
-                size="default"
-                className="w-full sm:w-auto"
+                size="sm"
+                className="gap-2"
               >
+                <ScanSearch className="h-4 w-4" />
                 {autoDetectMutation.isPending
-                  ? "🔍 Scanning..."
-                  : "🔍 Start Auto-Detection"}
+                  ? "Scanning…"
+                  : "Start Auto-Detection"}
               </Button>
             </div>
           </div>
         )}
 
         {/* Filters */}
-        <div className="space-y-4">
-          {/* Search Input - Full Width on Mobile */}
-          <div className="w-full">
-            <input
-              type="text"
-              placeholder="Search scripts, container IDs, or servers..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="border-border bg-card text-foreground placeholder-muted-foreground focus:ring-ring w-full rounded-md border px-3 py-2 focus:ring-2 focus:outline-none"
-            />
-          </div>
-
-          {/* Filter Dropdowns - Responsive Grid */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <select
-              value={statusFilter}
-              onChange={(e) =>
-                setStatusFilter(
-                  e.target.value as
-                    | "all"
-                    | "success"
-                    | "failed"
-                    | "in_progress",
-                )
-              }
-              className="border-border bg-card text-foreground focus:ring-ring w-full rounded-md border px-3 py-2 focus:ring-2 focus:outline-none"
-            >
-              <option value="all">All Status</option>
-              <option value="success">Success</option>
-              <option value="failed">Failed</option>
-              <option value="in_progress">In Progress</option>
-            </select>
-
-            <select
-              value={serverFilter}
-              onChange={(e) => setServerFilter(e.target.value)}
-              className="border-border bg-card text-foreground focus:ring-ring w-full rounded-md border px-3 py-2 focus:ring-2 focus:outline-none"
-            >
-              <option value="all">All Servers</option>
-              <option value="local">Local</option>
-              {uniqueServers.map((server) => (
-                <option key={server} value={server}>
-                  {server}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="border-border rounded-lg border p-4">
+          <InstalledScriptsFilters
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            statusFilter={statusFilter}
+            onStatusFilterChange={setStatusFilter}
+            serverFilter={serverFilter}
+            onServerFilterChange={setServerFilter}
+            uniqueServers={uniqueServers}
+          />
         </div>
       </div>
 
       {/* Scripts Display - Mobile Cards / Desktop Table */}
-      <div className="bg-card overflow-hidden rounded-lg shadow">
+      <div className="bg-card border-border overflow-hidden rounded-lg border shadow-sm">
         {filteredScripts.length === 0 ? (
-          <div className="text-muted-foreground py-8 text-center">
-            {scripts.length === 0
-              ? "No installed scripts found."
-              : "No scripts match your filters."}
+          <div className="flex flex-col items-center justify-center gap-3 py-16">
+            <FolderX className="text-muted-foreground/40 h-12 w-12" />
+            <p className="text-muted-foreground text-sm">
+              {scripts.length === 0
+                ? "No installed scripts yet."
+                : "No scripts match your filters."}
+            </p>
           </div>
         ) : (
           <>
@@ -1954,33 +1896,37 @@ export function InstalledScriptsTab() {
 
             {/* Desktop Table Layout */}
             <div className="hidden overflow-x-auto md:block">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-muted">
+              <table className="min-w-full">
+                <thead className="border-border bg-muted/50 border-b">
                   <tr>
                     <th
                       className="text-muted-foreground hover:bg-muted/80 cursor-pointer px-6 py-3 text-left text-xs font-medium tracking-wider uppercase select-none"
                       onClick={() => handleSort("script_name")}
                     >
-                      <div className="flex items-center space-x-1">
+                      <div className="flex items-center gap-1">
                         <span>Script Name</span>
-                        {sortField === "script_name" && (
-                          <span className="text-primary">
-                            {sortDirection === "asc" ? "↑" : "↓"}
-                          </span>
-                        )}
+                        {sortField === "script_name" ? (
+                          sortDirection === "asc" ? (
+                            <ChevronUp className="text-primary h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDown className="text-primary h-3.5 w-3.5" />
+                          )
+                        ) : null}
                       </div>
                     </th>
                     <th
                       className="text-muted-foreground hover:bg-muted/80 cursor-pointer px-6 py-3 text-left text-xs font-medium tracking-wider uppercase select-none"
                       onClick={() => handleSort("container_id")}
                     >
-                      <div className="flex items-center space-x-1">
+                      <div className="flex items-center gap-1">
                         <span>Container ID</span>
-                        {sortField === "container_id" && (
-                          <span className="text-primary">
-                            {sortDirection === "asc" ? "↑" : "↓"}
-                          </span>
-                        )}
+                        {sortField === "container_id" ? (
+                          sortDirection === "asc" ? (
+                            <ChevronUp className="text-primary h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDown className="text-primary h-3.5 w-3.5" />
+                          )
+                        ) : null}
                       </div>
                     </th>
                     <th className="text-muted-foreground px-6 py-3 text-left text-xs font-medium tracking-wider uppercase">
@@ -1990,39 +1936,45 @@ export function InstalledScriptsTab() {
                       className="text-muted-foreground hover:bg-muted/80 cursor-pointer px-6 py-3 text-left text-xs font-medium tracking-wider uppercase select-none"
                       onClick={() => handleSort("server_name")}
                     >
-                      <div className="flex items-center space-x-1">
+                      <div className="flex items-center gap-1">
                         <span>Server</span>
-                        {sortField === "server_name" && (
-                          <span className="text-primary">
-                            {sortDirection === "asc" ? "↑" : "↓"}
-                          </span>
-                        )}
+                        {sortField === "server_name" ? (
+                          sortDirection === "asc" ? (
+                            <ChevronUp className="text-primary h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDown className="text-primary h-3.5 w-3.5" />
+                          )
+                        ) : null}
                       </div>
                     </th>
                     <th
                       className="text-muted-foreground hover:bg-muted/80 cursor-pointer px-6 py-3 text-left text-xs font-medium tracking-wider uppercase select-none"
                       onClick={() => handleSort("status")}
                     >
-                      <div className="flex items-center space-x-1">
+                      <div className="flex items-center gap-1">
                         <span>Status</span>
-                        {sortField === "status" && (
-                          <span className="text-primary">
-                            {sortDirection === "asc" ? "↑" : "↓"}
-                          </span>
-                        )}
+                        {sortField === "status" ? (
+                          sortDirection === "asc" ? (
+                            <ChevronUp className="text-primary h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDown className="text-primary h-3.5 w-3.5" />
+                          )
+                        ) : null}
                       </div>
                     </th>
                     <th
                       className="text-muted-foreground hover:bg-muted/80 cursor-pointer px-6 py-3 text-left text-xs font-medium tracking-wider uppercase select-none"
                       onClick={() => handleSort("installation_date")}
                     >
-                      <div className="flex items-center space-x-1">
+                      <div className="flex items-center gap-1">
                         <span>Installation Date</span>
-                        {sortField === "installation_date" && (
-                          <span className="text-primary">
-                            {sortDirection === "asc" ? "↑" : "↓"}
-                          </span>
-                        )}
+                        {sortField === "installation_date" ? (
+                          sortDirection === "asc" ? (
+                            <ChevronUp className="text-primary h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronDown className="text-primary h-3.5 w-3.5" />
+                          )
+                        ) : null}
                       </div>
                     </th>
                     <th className="text-muted-foreground px-6 py-3 text-left text-xs font-medium tracking-wider uppercase">
@@ -2030,7 +1982,7 @@ export function InstalledScriptsTab() {
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-card divide-y divide-gray-200">
+                <tbody className="bg-card divide-border divide-y">
                   {filteredScripts.map((script) => (
                     <tr
                       key={script.id}
@@ -2244,22 +2196,34 @@ export function InstalledScriptsTab() {
                               >
                                 Edit
                               </Button>
-                              {hasActions(script) && (
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      className="bg-muted/20 hover:bg-muted/30 border-muted text-muted-foreground hover:text-foreground hover:border-muted-foreground border transition-all duration-200 hover:scale-105 hover:shadow-md"
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="bg-muted/20 hover:bg-muted/30 border-muted text-muted-foreground hover:text-foreground hover:border-muted-foreground border transition-all duration-200 hover:scale-105 hover:shadow-md"
+                                  >
+                                    Actions
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent className="bg-card border-border w-48">
+                                  {script.container_id && !script.is_vm && (
+                                    <DropdownMenuItem
+                                      onClick={() => handleUpdateScript(script)}
+                                      disabled={
+                                        containerStatuses.get(script.id) ===
+                                        "stopped"
+                                      }
+                                      className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
                                     >
-                                      Actions
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent className="bg-card border-border w-48">
-                                    {script.container_id && !script.is_vm && (
+                                      Update
+                                    </DropdownMenuItem>
+                                  )}
+                                  {script.container_id &&
+                                    script.execution_mode === "ssh" && (
                                       <DropdownMenuItem
                                         onClick={() =>
-                                          handleUpdateScript(script)
+                                          handleBackupScript(script)
                                         }
                                         disabled={
                                           containerStatuses.get(script.id) ===
@@ -2267,187 +2231,163 @@ export function InstalledScriptsTab() {
                                         }
                                         className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
                                       >
-                                        Update
+                                        Backup
                                       </DropdownMenuItem>
                                     )}
-                                    {script.container_id &&
-                                      script.execution_mode === "ssh" && (
-                                        <DropdownMenuItem
-                                          onClick={() =>
-                                            handleBackupScript(script)
-                                          }
-                                          disabled={
-                                            containerStatuses.get(script.id) ===
-                                            "stopped"
-                                          }
-                                          className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
-                                        >
-                                          Backup
-                                        </DropdownMenuItem>
-                                      )}
-                                    {script.container_id &&
-                                      script.execution_mode === "ssh" && (
-                                        <DropdownMenuItem
-                                          onClick={() =>
-                                            handleCloneScript(script)
-                                          }
-                                          disabled={
-                                            containerStatuses.get(script.id) ===
-                                            "stopped"
-                                          }
-                                          className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
-                                        >
-                                          Clone
-                                        </DropdownMenuItem>
-                                      )}
-                                    {script.container_id &&
-                                      script.execution_mode === "ssh" && (
-                                        <DropdownMenuItem
-                                          onClick={() =>
-                                            handleOpenShell(script)
-                                          }
-                                          disabled={
-                                            containerStatuses.get(script.id) ===
-                                            "stopped"
-                                          }
-                                          className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
-                                          title={
-                                            script.is_vm
-                                              ? "VM serial console (requires serial port; detach with Ctrl+O)"
-                                              : undefined
-                                          }
-                                        >
-                                          Shell
-                                        </DropdownMenuItem>
-                                      )}
-                                    {script.web_ui_ip && (
+                                  {script.container_id &&
+                                    script.execution_mode === "ssh" && (
                                       <DropdownMenuItem
-                                        onClick={() => handleOpenWebUI(script)}
+                                        onClick={() =>
+                                          handleCloneScript(script)
+                                        }
                                         disabled={
                                           containerStatuses.get(script.id) ===
                                           "stopped"
                                         }
                                         className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
                                       >
-                                        Open UI
+                                        Clone
                                       </DropdownMenuItem>
                                     )}
-                                    {script.container_id &&
-                                      script.execution_mode === "ssh" &&
-                                      script.web_ui_ip && (
-                                        <DropdownMenuItem
-                                          onClick={() =>
-                                            handleAutoDetectWebUI(script)
-                                          }
-                                          disabled={
-                                            autoDetectWebUIMutation.isPending ??
-                                            containerStatuses.get(script.id) ===
-                                              "stopped"
-                                          }
-                                          className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
-                                        >
-                                          {autoDetectWebUIMutation.isPending
-                                            ? "Re-detect..."
-                                            : "Re-detect IP/Port"}
-                                        </DropdownMenuItem>
-                                      )}
-                                    {script.container_id &&
-                                      script.execution_mode === "ssh" &&
-                                      !script.is_vm && (
-                                        <>
-                                          <DropdownMenuSeparator className="bg-border" />
-                                          <DropdownMenuItem
-                                            onClick={() =>
-                                              handleLXCSettings(script)
-                                            }
-                                            className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
-                                          >
-                                            <Settings className="mr-2 h-4 w-4" />
-                                            LXC Settings
-                                          </DropdownMenuItem>
-                                          <DropdownMenuSeparator className="bg-border" />
-                                        </>
-                                      )}
-                                    {script.container_id &&
-                                      script.execution_mode === "ssh" && (
-                                        <>
-                                          {script.is_vm && (
-                                            <DropdownMenuSeparator className="bg-border" />
-                                          )}
-                                          <DropdownMenuItem
-                                            onClick={() =>
-                                              handleStartStop(
-                                                script,
-                                                (containerStatuses.get(
-                                                  script.id,
-                                                ) ?? "unknown") === "running"
-                                                  ? "stop"
-                                                  : "start",
-                                              )
-                                            }
-                                            disabled={
-                                              controllingScriptId ===
-                                                script.id ||
-                                              (containerStatuses.get(
-                                                script.id,
-                                              ) ?? "unknown") === "unknown"
-                                            }
-                                            className={
-                                              (containerStatuses.get(
-                                                script.id,
-                                              ) ?? "unknown") === "running"
-                                                ? "text-error hover:text-error-foreground hover:bg-error/20 focus:bg-error/20"
-                                                : "text-success hover:text-success-foreground hover:bg-success/20 focus:bg-success/20"
-                                            }
-                                          >
-                                            {controllingScriptId === script.id
-                                              ? "Working..."
-                                              : (containerStatuses.get(
-                                                    script.id,
-                                                  ) ?? "unknown") === "running"
-                                                ? "Stop"
-                                                : "Start"}
-                                          </DropdownMenuItem>
-                                          <DropdownMenuItem
-                                            onClick={() =>
-                                              handleDestroy(script)
-                                            }
-                                            disabled={
-                                              controllingScriptId === script.id
-                                            }
-                                            className="text-error hover:text-error-foreground hover:bg-error/20 focus:bg-error/20"
-                                          >
-                                            {controllingScriptId === script.id
-                                              ? "Working..."
-                                              : "Destroy"}
-                                          </DropdownMenuItem>
-                                          <DropdownMenuSeparator className="bg-border" />
-                                          <DropdownMenuItem
-                                            onClick={() =>
-                                              handleDeleteScript(
-                                                script.id,
-                                                script,
-                                              )
-                                            }
-                                            disabled={
-                                              deleteScriptMutation.isPending
-                                            }
-                                            className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
-                                          >
-                                            {deleteScriptMutation.isPending
-                                              ? "Deleting..."
-                                              : "Delete only from DB"}
-                                          </DropdownMenuItem>
-                                        </>
-                                      )}
-                                    {(!script.container_id ||
-                                      script.execution_mode !== "ssh") && (
+                                  {script.container_id &&
+                                    script.execution_mode === "ssh" && (
+                                      <DropdownMenuItem
+                                        onClick={() => handleOpenShell(script)}
+                                        disabled={
+                                          containerStatuses.get(script.id) ===
+                                          "stopped"
+                                        }
+                                        className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
+                                        title={
+                                          script.is_vm
+                                            ? "VM serial console (requires serial port; detach with Ctrl+O)"
+                                            : undefined
+                                        }
+                                      >
+                                        Shell
+                                      </DropdownMenuItem>
+                                    )}
+                                  {script.web_ui_ip && (
+                                    <DropdownMenuItem
+                                      onClick={() => handleOpenWebUI(script)}
+                                      disabled={
+                                        containerStatuses.get(script.id) ===
+                                        "stopped"
+                                      }
+                                      className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
+                                    >
+                                      Open UI
+                                    </DropdownMenuItem>
+                                  )}
+                                  {script.container_id &&
+                                    script.execution_mode === "ssh" &&
+                                    script.web_ui_ip && (
+                                      <DropdownMenuItem
+                                        onClick={() =>
+                                          handleAutoDetectWebUI(script)
+                                        }
+                                        disabled={
+                                          autoDetectWebUIMutation.isPending ??
+                                          containerStatuses.get(script.id) ===
+                                            "stopped"
+                                        }
+                                        className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
+                                      >
+                                        {autoDetectWebUIMutation.isPending
+                                          ? "Re-detect..."
+                                          : "Re-detect IP/Port"}
+                                      </DropdownMenuItem>
+                                    )}
+                                  {script.container_id &&
+                                    script.execution_mode === "ssh" &&
+                                    !script.is_vm && (
                                       <>
                                         <DropdownMenuSeparator className="bg-border" />
                                         <DropdownMenuItem
                                           onClick={() =>
+                                            handleLXCSettings(script)
+                                          }
+                                          className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
+                                        >
+                                          <Settings className="mr-2 h-4 w-4" />
+                                          LXC Settings
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator className="bg-border" />
+                                      </>
+                                    )}
+                                  {script.container_id &&
+                                    script.execution_mode === "ssh" && (
+                                      <>
+                                        {script.is_vm && (
+                                          <DropdownMenuSeparator className="bg-border" />
+                                        )}
+                                        <DropdownMenuItem
+                                          onClick={() =>
+                                            handleStartStop(
+                                              script,
+                                              (containerStatuses.get(
+                                                script.id,
+                                              ) ?? "unknown") === "running"
+                                                ? "stop"
+                                                : "start",
+                                            )
+                                          }
+                                          disabled={
+                                            controllingScriptId === script.id ||
+                                            (containerStatuses.get(script.id) ??
+                                              "unknown") === "unknown"
+                                          }
+                                          className={
+                                            (containerStatuses.get(script.id) ??
+                                              "unknown") === "running"
+                                              ? "text-error hover:text-error-foreground hover:bg-error/20 focus:bg-error/20"
+                                              : "text-success hover:text-success-foreground hover:bg-success/20 focus:bg-success/20"
+                                          }
+                                        >
+                                          {controllingScriptId === script.id
+                                            ? "Working..."
+                                            : (containerStatuses.get(
+                                                  script.id,
+                                                ) ?? "unknown") === "running"
+                                              ? "Stop"
+                                              : "Start"}
+                                        </DropdownMenuItem>
+                                        {/* Restart / Reboot — only available when running */}
+                                        {(containerStatuses.get(script.id) ??
+                                          "unknown") === "running" && (
+                                          <DropdownMenuItem
+                                            onClick={() =>
+                                              handleRestart(script)
+                                            }
+                                            disabled={
+                                              controllingScriptId === script.id
+                                            }
+                                            className="text-warning hover:text-warning-foreground hover:bg-warning/20 focus:bg-warning/20"
+                                          >
+                                            {controllingScriptId === script.id
+                                              ? "Working..."
+                                              : script.is_vm
+                                                ? "Reboot"
+                                                : "Restart"}
+                                          </DropdownMenuItem>
+                                        )}
+                                        <DropdownMenuItem
+                                          onClick={() => handleDestroy(script)}
+                                          disabled={
+                                            controllingScriptId === script.id
+                                          }
+                                          className="text-error hover:text-error-foreground hover:bg-error/20 focus:bg-error/20"
+                                        >
+                                          {controllingScriptId === script.id
+                                            ? "Working..."
+                                            : "Destroy"}
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator className="bg-border" />
+                                        <DropdownMenuItem
+                                          onClick={() =>
                                             handleDeleteScript(
-                                              Number(script.id),
+                                              script.id,
+                                              script,
                                             )
                                           }
                                           disabled={
@@ -2457,13 +2397,31 @@ export function InstalledScriptsTab() {
                                         >
                                           {deleteScriptMutation.isPending
                                             ? "Deleting..."
-                                            : "Delete"}
+                                            : "Delete only from DB"}
                                         </DropdownMenuItem>
                                       </>
                                     )}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              )}
+                                  {(!script.container_id ||
+                                    script.execution_mode !== "ssh") && (
+                                    <>
+                                      <DropdownMenuSeparator className="bg-border" />
+                                      <DropdownMenuItem
+                                        onClick={() =>
+                                          handleDeleteScript(Number(script.id))
+                                        }
+                                        disabled={
+                                          deleteScriptMutation.isPending
+                                        }
+                                        className="text-muted-foreground hover:text-foreground hover:bg-muted/20 focus:bg-muted/20"
+                                      >
+                                        {deleteScriptMutation.isPending
+                                          ? "Deleting..."
+                                          : "Delete"}
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </>
                           )}
                         </div>
@@ -2512,56 +2470,70 @@ export function InstalledScriptsTab() {
 
       {/* Backup Prompt Modal */}
       {showBackupPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="bg-card border-border w-full max-w-md rounded-lg border shadow-xl">
-            <div className="border-border flex items-center justify-center border-b p-6">
-              <div className="flex items-center gap-3">
-                <svg
-                  className="text-info h-8 w-8"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                  />
-                </svg>
-                <h2 className="text-card-foreground text-2xl font-bold">
-                  Backup Before Update?
-                </h2>
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+            <div className="bg-card border-border w-full max-w-md rounded-lg border shadow-xl">
+              <div className="border-border flex items-center justify-center border-b p-6">
+                <div className="flex items-center gap-3">
+                  <svg
+                    className="text-info h-8 w-8"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                    />
+                  </svg>
+                  <h2 className="text-card-foreground text-2xl font-bold">
+                    Backup Before Update?
+                  </h2>
+                </div>
               </div>
-            </div>
-            <div className="p-6">
-              <p className="text-muted-foreground mb-6 text-sm">
-                Would you like to create a backup before updating the container?
-              </p>
-              <div className="flex flex-col justify-end gap-3 sm:flex-row">
-                <Button
-                  onClick={() => {
-                    setShowBackupPrompt(false);
-                    handleBackupPromptResponse(false);
-                  }}
-                  variant="outline"
-                  size="default"
-                  className="w-full sm:w-auto"
-                >
-                  No, Update Without Backup
-                </Button>
-                <Button
-                  onClick={() => handleBackupPromptResponse(true)}
-                  variant="default"
-                  size="default"
-                  className="w-full sm:w-auto"
-                >
-                  Yes, Backup First
-                </Button>
+              <div className="p-6">
+                <p className="text-muted-foreground mb-4 text-sm">
+                  Would you like to create a backup before updating the
+                  container?
+                </p>
+                <label className="mb-6 flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={silentUpdate}
+                    onChange={(e) => setSilentUpdate(e.target.checked)}
+                    className="accent-primary h-4 w-4 rounded"
+                  />
+                  <span className="text-muted-foreground text-sm">
+                    Silent update (no user prompts)
+                  </span>
+                </label>
+                <div className="flex flex-col justify-end gap-3 sm:flex-row">
+                  <Button
+                    onClick={() => {
+                      setShowBackupPrompt(false);
+                      handleBackupPromptResponse(false);
+                    }}
+                    variant="outline"
+                    size="default"
+                    className="w-full sm:w-auto"
+                  >
+                    No, Update Without Backup
+                  </Button>
+                  <Button
+                    onClick={() => handleBackupPromptResponse(true)}
+                    variant="default"
+                    size="default"
+                    className="w-full sm:w-auto"
+                  >
+                    Yes, Backup First
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {/* Storage Selection Modal */}
@@ -2614,7 +2586,7 @@ export function InstalledScriptsTab() {
         title="Select Clone Storage"
         description="Select a storage to use for cloning. Only storages with rootdir content are shown."
         filterFn={(storage) => {
-          return storage.content.includes('rootdir');
+          return storage.content.includes("rootdir");
         }}
         showBackupTag={false}
       />
@@ -2629,7 +2601,7 @@ export function InstalledScriptsTab() {
           setSelectedCloneStorage(null);
         }}
         onSubmit={handleCloneCountSubmit}
-        storageName={selectedCloneStorage?.name ?? ''}
+        storageName={selectedCloneStorage?.name ?? ""}
       />
 
       {/* LXC Settings Modal */}

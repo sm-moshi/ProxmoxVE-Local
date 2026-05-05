@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { api } from "~/trpc/react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -13,6 +14,8 @@ import {
   Server,
   CheckCircle,
   AlertCircle,
+  Plus,
+  ArrowLeft,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -22,6 +25,8 @@ import {
 } from "./ui/dropdown-menu";
 import { ConfirmationModal } from "./ConfirmationModal";
 import { LoadingModal } from "./LoadingModal";
+import { useShell } from "./ShellContext";
+import type { Server as ServerType } from "~/types/server";
 
 interface Backup {
   id: number;
@@ -47,6 +52,8 @@ export function BackupsTab() {
   const [expandedContainers, setExpandedContainers] = useState<Set<string>>(
     new Set(),
   );
+  const shell = useShell();
+  const [servers, setServers] = useState<ServerType[]>([]);
   const [hasAutoDiscovered, setHasAutoDiscovered] = useState(false);
   const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
   const [selectedBackup, setSelectedBackup] = useState<{
@@ -58,6 +65,17 @@ export function BackupsTab() {
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [shouldPollRestore, setShouldPollRestore] = useState(false);
 
+  // Create-backup dialog state
+  // mode "existing": opened from container row (serverId + containerIds pre-filled)
+  // mode "new":      opened from header button (pick server → containers → storage)
+  const [createDialog, setCreateDialog] = useState<{
+    mode: "existing" | "new";
+    step: "server" | "containers" | "storage";
+    serverId: number | null;
+    containerIds: string[]; // multi-select
+  } | null>(null);
+  const [selectedStorage, setSelectedStorage] = useState("");
+
   const {
     data: backupsData,
     refetch: refetchBackups,
@@ -68,6 +86,41 @@ export function BackupsTab() {
       void refetchBackups();
     },
   });
+
+  // Storages for create-backup dialog (shown once at least one container is selected)
+  const storagesQuery = api.installedScripts.getBackupStorages.useQuery(
+    { serverId: createDialog?.serverId ?? 0 },
+    {
+      enabled:
+        (createDialog?.serverId ?? 0) > 0 &&
+        (createDialog?.containerIds.length ?? 0) > 0,
+    },
+  );
+
+  // Containers for new-backup dialog (shown when server is picked)
+  const containersQuery = api.installedScripts.listContainersOnServer.useQuery(
+    { serverId: createDialog?.serverId ?? 0 },
+    {
+      enabled:
+        createDialog?.mode === "new" &&
+        createDialog.step === "containers" &&
+        (createDialog?.serverId ?? 0) > 0,
+    },
+  );
+
+  // Estimate backup size from selected containers (sum of configured disk sizes)
+  const resourceTemplatesQuery =
+    api.installedScripts.getContainersResourceTemplates.useQuery(
+      {
+        serverId: createDialog?.serverId ?? 0,
+        containerIds: createDialog?.containerIds ?? [],
+      },
+      {
+        enabled:
+          (createDialog?.serverId ?? 0) > 0 &&
+          (createDialog?.containerIds.length ?? 0) > 0,
+      },
+    );
 
   // Poll for restore progress
   const { data: restoreLogsData } = api.backups.getRestoreProgress.useQuery(
@@ -154,6 +207,16 @@ export function BackupsTab() {
       ? restoreProgress[restoreProgress.length - 1]
       : "Restoring backup...";
 
+  // Load servers for the create-backup dialog
+  useEffect(() => {
+    fetch("/api/servers")
+      .then((r) => r.json())
+      .then((data: ServerType[]) => setServers(data))
+      .catch(() => {
+        /* ignore */
+      });
+  }, []);
+
   // Auto-discover backups when tab is first opened
   useEffect(() => {
     if (!hasAutoDiscovered && !isLoading && backupsData) {
@@ -167,6 +230,38 @@ export function BackupsTab() {
 
   const handleDiscoverBackups = () => {
     discoverMutation.mutate();
+  };
+
+  const handleOpenCreateBackup = (containerId: string, serverId: number) => {
+    setCreateDialog({
+      mode: "existing",
+      step: "storage",
+      serverId,
+      containerIds: [containerId],
+    });
+    setSelectedStorage("");
+  };
+
+  const handleStartBackup = () => {
+    if (
+      !createDialog?.containerIds.length ||
+      !createDialog?.serverId ||
+      !selectedStorage
+    )
+      return;
+    const server = servers.find((s) => s.id === createDialog.serverId);
+    if (!server) return;
+    for (const cid of createDialog.containerIds) {
+      shell.open({
+        containerId: cid,
+        server,
+        containerType: "lxc",
+        backupStorage: selectedStorage,
+        onComplete: () => discoverMutation.mutate(),
+      });
+    }
+    setCreateDialog(null);
+    setSelectedStorage("");
   };
 
   const handleRestoreClick = (backup: Backup, containerId: string) => {
@@ -253,16 +348,34 @@ export function BackupsTab() {
             Discovered backups grouped by container ID
           </p>
         </div>
-        <Button
-          onClick={handleDiscoverBackups}
-          disabled={isDiscovering}
-          className="flex items-center gap-2"
-        >
-          <RefreshCw
-            className={`h-4 w-4 ${isDiscovering ? "animate-spin" : ""}`}
-          />
-          {isDiscovering ? "Discovering..." : "Discover Backups"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setCreateDialog({
+                mode: "new",
+                step: "server",
+                serverId: null,
+                containerIds: [],
+              });
+              setSelectedStorage("");
+            }}
+            className="flex items-center gap-2"
+          >
+            <Plus className="h-4 w-4" />
+            New Backup
+          </Button>
+          <Button
+            onClick={handleDiscoverBackups}
+            disabled={isDiscovering}
+            className="flex items-center gap-2"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${isDiscovering ? "animate-spin" : ""}`}
+            />
+            {isDiscovering ? "Discovering..." : "Discover Backups"}
+          </Button>
+        </div>
       </div>
 
       {/* Loading state */}
@@ -308,11 +421,11 @@ export function BackupsTab() {
                 className="bg-card border-border overflow-hidden rounded-lg border shadow-sm"
               >
                 {/* Container header - collapsible */}
-                <button
-                  onClick={() => toggleContainer(container.container_id)}
-                  className="hover:bg-accent/50 flex w-full items-center justify-between p-4 text-left transition-colors"
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                <div className="hover:bg-accent/50 flex w-full items-center justify-between p-4 transition-colors">
+                  <button
+                    onClick={() => toggleContainer(container.container_id)}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  >
                     {isExpanded ? (
                       <ChevronDown className="text-muted-foreground h-5 w-5 flex-shrink-0" />
                     ) : (
@@ -336,8 +449,26 @@ export function BackupsTab() {
                         {backupCount} {backupCount === 1 ? "backup" : "backups"}
                       </p>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                  {/* Create Backup button — only shown when server is known */}
+                  {(container.backups[0]?.server_id ?? 0) > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenCreateBackup(
+                          container.container_id,
+                          container.backups[0]!.server_id!,
+                        );
+                      }}
+                      className="ml-3 flex-shrink-0 gap-1.5"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Backup
+                    </Button>
+                  )}
+                </div>
 
                 {/* Container content - backups list */}
                 {isExpanded && (
@@ -546,6 +677,400 @@ export function BackupsTab() {
           </Button>
         </div>
       )}
+
+      {/* ── Create Backup Dialog ── */}
+      {createDialog &&
+        (() => {
+          // Build typed container list once
+          type CT = {
+            id: string;
+            name: string;
+            status: string;
+            type: "CT" | "VM";
+          };
+          const lxcItems: CT[] = (containersQuery.data?.lxc ?? []).map((c) => ({
+            id: c.id,
+            name: c.name,
+            status: c.status,
+            type: "CT" as const,
+          }));
+          const vmItems: CT[] = (containersQuery.data?.vm ?? []).map((c) => ({
+            id: c.id,
+            name: c.name,
+            status: c.status,
+            type: "VM" as const,
+          }));
+          const allContainers: CT[] = [...lxcItems, ...vmItems];
+
+          const isServerStep =
+            createDialog.mode === "new" && createDialog.step === "server";
+          const isContainerStep =
+            createDialog.mode === "new" && createDialog.step === "containers";
+          const isStorageStep = createDialog.step === "storage";
+
+          const templates: Record<
+            string,
+            { cpu: number | null; ramMB: number | null; diskGB: number | null }
+          > = resourceTemplatesQuery.data?.templates ?? {};
+          const estimatedBackupGb = createDialog.containerIds.reduce(
+            (sum, id) => sum + (templates[id]?.diskGB ?? 0),
+            0,
+          );
+
+          const storageOptions =
+            storagesQuery.data?.storages?.filter((s) => s.supportsBackup) ?? [];
+
+          const stepLabel =
+            createDialog.mode === "existing"
+              ? `Backup CT ${createDialog.containerIds[0]} — select storage`
+              : isServerStep
+                ? "Select Server"
+                : isStorageStep
+                  ? `${createDialog.containerIds.length} container${createDialog.containerIds.length > 1 ? "s" : ""} selected — select storage`
+                  : "Select Containers";
+
+          return createPortal(
+            <div className="fixed inset-0 z-[10000] overflow-y-auto bg-black/45 backdrop-blur-sm">
+              <div className="flex min-h-full items-start justify-center p-4 pt-12 pb-8">
+                <div className="bg-card border-border w-full max-w-3xl rounded-2xl border shadow-2xl">
+                  {/* Header */}
+                  <div className="border-border flex items-center gap-3 border-b px-6 py-4">
+                    {createDialog.mode === "new" &&
+                      createDialog.step !== "server" && (
+                        <button
+                          onClick={() =>
+                            setCreateDialog((d) => {
+                              if (!d) return null;
+                              if (d.step === "storage")
+                                return { ...d, step: "containers" };
+                              return {
+                                ...d,
+                                step: "server",
+                                serverId: null,
+                                containerIds: [],
+                              };
+                            })
+                          }
+                          className="text-muted-foreground hover:text-foreground rounded p-1 transition-colors"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                        </button>
+                      )}
+                    <div className="flex-1">
+                      <h3 className="text-foreground text-lg font-semibold">
+                        {createDialog.mode === "existing"
+                          ? "Create Backup"
+                          : "New Backup"}
+                      </h3>
+                      <p className="text-muted-foreground mt-0.5 text-sm">
+                        {stepLabel}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setCreateDialog(null);
+                        setSelectedStorage("");
+                      }}
+                      className="text-muted-foreground hover:text-foreground rounded p-1.5 transition-colors"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  {/* Body */}
+                  <div className="max-h-[70vh] overflow-y-auto p-6">
+                    {isServerStep && (
+                      <div className="space-y-2">
+                        <p className="text-muted-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
+                          Choose a server
+                        </p>
+                        {servers.length === 0 ? (
+                          <p className="text-muted-foreground py-6 text-center text-sm">
+                            No servers configured.
+                          </p>
+                        ) : (
+                          servers.map((srv) => (
+                            <button
+                              key={srv.id}
+                              onClick={() =>
+                                setCreateDialog((d) =>
+                                  d
+                                    ? {
+                                        ...d,
+                                        serverId: srv.id,
+                                        step: "containers",
+                                      }
+                                    : null,
+                                )
+                              }
+                              className="border-border hover:border-primary/60 hover:bg-primary/5 group flex w-full items-center rounded-xl border px-5 py-4 text-left transition-colors"
+                            >
+                              <div className="bg-primary/10 mr-4 flex h-9 w-9 items-center justify-center rounded-lg">
+                                <Server className="text-primary h-4 w-4" />
+                              </div>
+                              <div>
+                                <p className="text-foreground font-medium">
+                                  {srv.name}
+                                </p>
+                                <p className="text-muted-foreground text-sm">
+                                  {srv.ip}
+                                </p>
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+
+                    {isContainerStep && (
+                      <div>
+                        <p className="text-muted-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
+                          Select containers (multiple allowed)
+                        </p>
+                        {containersQuery.isLoading ? (
+                          <div className="flex items-center gap-2 py-6">
+                            <RefreshCw className="text-muted-foreground h-4 w-4 animate-spin" />
+                            <span className="text-muted-foreground text-sm">
+                              Loading containers…
+                            </span>
+                          </div>
+                        ) : allContainers.length === 0 ? (
+                          <p className="text-muted-foreground py-6 text-center text-sm">
+                            No containers found on this server.
+                          </p>
+                        ) : (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {allContainers.map((ct) => {
+                              const selected =
+                                createDialog.containerIds.includes(ct.id);
+                              return (
+                                <button
+                                  key={ct.id}
+                                  onClick={() =>
+                                    setCreateDialog((d) => {
+                                      if (!d) return null;
+                                      const ids = d.containerIds.includes(ct.id)
+                                        ? d.containerIds.filter(
+                                            (id) => id !== ct.id,
+                                          )
+                                        : [...d.containerIds, ct.id];
+                                      return { ...d, containerIds: ids };
+                                    })
+                                  }
+                                  className={[
+                                    "flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors",
+                                    selected
+                                      ? "border-primary bg-primary/10"
+                                      : "border-border hover:border-primary/40 hover:bg-accent/50",
+                                  ].join(" ")}
+                                >
+                                  <div
+                                    className={[
+                                      "flex h-5 w-5 items-center justify-center rounded border transition-colors",
+                                      selected
+                                        ? "border-primary bg-primary"
+                                        : "border-border bg-background",
+                                    ].join(" ")}
+                                  >
+                                    {selected && (
+                                      <svg
+                                        className="h-3 w-3 text-white"
+                                        viewBox="0 0 12 12"
+                                        fill="none"
+                                      >
+                                        <path
+                                          d="M2 6l3 3 5-5"
+                                          stroke="currentColor"
+                                          strokeWidth="1.5"
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                        />
+                                      </svg>
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span
+                                        className={[
+                                          "rounded px-1.5 py-0.5 text-[10px] font-bold",
+                                          ct.type === "VM"
+                                            ? "bg-blue-500/10 text-blue-500"
+                                            : "bg-green-500/10 text-green-500",
+                                        ].join(" ")}
+                                      >
+                                        {ct.type}
+                                      </span>
+                                      <span
+                                        className={`text-sm font-medium ${selected ? "text-primary" : "text-foreground"}`}
+                                      >
+                                        {ct.id}
+                                      </span>
+                                    </div>
+                                    {ct.name && ct.name !== ct.id && (
+                                      <p className="text-muted-foreground mt-0.5 truncate text-xs">
+                                        {ct.name}
+                                      </p>
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {isStorageStep && (
+                      <div>
+                        {createDialog.mode === "new" && (
+                          <div className="border-border bg-primary/5 mb-4 flex flex-wrap gap-2 rounded-lg border px-4 py-3">
+                            {createDialog.containerIds.map((id) => (
+                              <span
+                                key={id}
+                                className="bg-primary/10 text-primary rounded-full px-2.5 py-0.5 text-xs font-medium"
+                              >
+                                CT {id}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {createDialog.containerIds.length > 0 && (
+                          <div className="bg-muted/40 border-border mb-3 rounded-lg border px-3 py-2 text-xs">
+                            <span className="text-muted-foreground">
+                              Estimated maximum backup size:{" "}
+                            </span>
+                            <span className="text-foreground font-semibold">
+                              {estimatedBackupGb > 0
+                                ? `${estimatedBackupGb} GB`
+                                : "Unknown"}
+                            </span>
+                            {resourceTemplatesQuery.isLoading && (
+                              <span className="text-muted-foreground ml-2">
+                                (calculating…)
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        <p className="text-muted-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
+                          Select backup storage
+                        </p>
+
+                        {storagesQuery.isLoading ? (
+                          <div className="flex items-center gap-2 py-6">
+                            <RefreshCw className="text-muted-foreground h-4 w-4 animate-spin" />
+                            <span className="text-muted-foreground text-sm">
+                              Loading storages…
+                            </span>
+                          </div>
+                        ) : storageOptions.length === 0 ? (
+                          <p className="text-muted-foreground py-6 text-center text-sm">
+                            No backup-capable storages found on this server.
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {storageOptions.map((storage) => {
+                              const availableGb =
+                                typeof storage.availableGB === "number"
+                                  ? storage.availableGB
+                                  : null;
+                              const lowSpace =
+                                availableGb != null &&
+                                estimatedBackupGb > 0 &&
+                                estimatedBackupGb > availableGb;
+                              return (
+                                <button
+                                  key={storage.name}
+                                  onClick={() =>
+                                    setSelectedStorage(storage.name)
+                                  }
+                                  className={[
+                                    "flex w-full items-center gap-3 rounded-xl border px-5 py-4 text-left transition-colors",
+                                    selectedStorage === storage.name
+                                      ? "border-primary bg-primary/10"
+                                      : "border-border hover:border-primary/40 hover:bg-accent/50",
+                                    lowSpace ? "border-error/40" : "",
+                                  ].join(" ")}
+                                >
+                                  <div
+                                    className={[
+                                      "flex h-5 w-5 items-center justify-center rounded-full border-2 transition-colors",
+                                      selectedStorage === storage.name
+                                        ? "border-primary"
+                                        : "border-border",
+                                    ].join(" ")}
+                                  >
+                                    {selectedStorage === storage.name && (
+                                      <div className="bg-primary h-2.5 w-2.5 rounded-full" />
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p
+                                      className={`font-medium ${selectedStorage === storage.name ? "text-primary" : "text-foreground"}`}
+                                    >
+                                      {storage.name}
+                                    </p>
+                                    <p className="text-muted-foreground text-xs">
+                                      {storage.type}
+                                      {availableGb != null
+                                        ? ` • Free: ${availableGb} GB`
+                                        : " • Free: unknown"}
+                                      {lowSpace ? " • may be too small" : ""}
+                                    </p>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="border-border flex justify-between gap-3 border-t px-6 py-4">
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setCreateDialog(null);
+                        setSelectedStorage("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <div className="flex items-center gap-3">
+                      {isContainerStep && (
+                        <Button
+                          disabled={createDialog.containerIds.length === 0}
+                          onClick={() =>
+                            setCreateDialog((d) =>
+                              d ? { ...d, step: "storage" } : null,
+                            )
+                          }
+                        >
+                          Continue ({createDialog.containerIds.length} selected)
+                        </Button>
+                      )}
+                      {isStorageStep && (
+                        <Button
+                          onClick={handleStartBackup}
+                          disabled={!selectedStorage || storagesQuery.isLoading}
+                        >
+                          Start Backup
+                          {createDialog.containerIds.length > 1
+                            ? ` (${createDialog.containerIds.length})`
+                            : ""}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          );
+        })()}
     </div>
   );
 }

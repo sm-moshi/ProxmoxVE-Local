@@ -79,6 +79,7 @@ const handle = app.getRequestHandler();
  * @property {boolean} [isShell]
  * @property {boolean} [isBackup]
  * @property {boolean} [isClone]
+ * @property {boolean} [executeInContainer]
  * @property {string} [containerId]
  * @property {string} [storage]
  * @property {string} [backupStorage]
@@ -317,7 +318,7 @@ class ScriptExecutionHandler {
    * @param {WebSocketMessage} message
    */
   async handleMessage(ws, message) {
-    const { action, scriptPath, executionId, input, mode, server, isUpdate, isShell, isBackup, isClone, containerId, storage, backupStorage, cloneCount, hostnames, containerType, envVars } = message;
+    const { action, scriptPath, executionId, input, mode, server, isUpdate, isShell, isBackup, isClone, executeInContainer, containerId, storage, backupStorage, cloneCount, hostnames, containerType, envVars } = message;
 
     switch (action) {
       case 'start':
@@ -332,9 +333,11 @@ class ScriptExecutionHandler {
           } else if (isBackup && containerId && storage) {
             await this.startBackupExecution(ws, containerId, executionId, storage, mode, resolved);
           } else if (isUpdate && containerId) {
-            await this.startUpdateExecution(ws, containerId, executionId, mode, resolved, backupStorage);
+            await this.startUpdateExecution(ws, containerId, executionId, mode, resolved, backupStorage, envVars);
           } else if (isShell && containerId) {
             await this.startShellExecution(ws, containerId, executionId, mode, resolved, containerType);
+          } else if (executeInContainer && containerId) {
+            await this.startInContainerScriptExecution(ws, scriptPath, executionId, mode, resolved, envVars, containerId, containerType ?? 'lxc');
           } else {
             await this.startScriptExecution(ws, scriptPath, executionId, mode, resolved, envVars);
           }
@@ -549,6 +552,171 @@ class ScriptExecutionHandler {
       if (installationId) {
         await this.updateInstallationRecord(installationId, { status: 'failed' });
       }
+    }
+  }
+
+
+  /**
+   * Execute a script INSIDE a container via `pct exec` (LXC) or `qm guest exec` (VM).
+   * For SSH mode the scripts folder is already transferred to /tmp/scripts on the PVE host by
+   * startSSHScriptExecution; we re-use that mechanism and then run the script inside the CT.
+   * For local mode we pipe the script through `pct exec`.
+   *
+   * @param {ExtendedWebSocket} ws
+   * @param {string} scriptPath
+   * @param {string} executionId
+   * @param {string} mode
+   * @param {ServerInfo|null} server
+   * @param {Object} envVars
+   * @param {string} containerId
+   * @param {'lxc'|'vm'} containerType
+   */
+  async startInContainerScriptExecution(ws, scriptPath, executionId, mode = 'local', server = null, envVars = {}, containerId, containerType = 'lxc') {
+    /** @type {number|null} */
+    let installationId = null;
+    try {
+      if (this.activeExecutions.has(executionId)) {
+        this.sendMessage(ws, { type: 'error', data: 'Script execution already running', timestamp: Date.now() });
+        return;
+      }
+
+      const scriptName = scriptPath.split('/').pop() ?? scriptPath.split('\\').pop() ?? 'Unknown Script';
+      const serverId = server ? (server.id ?? null) : null;
+      installationId = await this.createInstallationRecord(scriptName, scriptPath, mode, serverId);
+
+      // Build env-var export prefix
+      const envExports = Object.entries(envVars ?? {})
+        .map(([k, v]) => `export ${k}=${JSON.stringify(String(v))}`)
+        .join('; ');
+      const envPrefix = envExports ? `${envExports}; ` : '';
+
+      if (mode === 'ssh' && server) {
+        // Transfer scripts folder to PVE host, then exec inside container
+        const sshService = getSSHExecutionService();
+        this.sendMessage(ws, { type: 'start', data: `Connecting to ${server.ip}…`, timestamp: Date.now() });
+
+        const relScript = scriptPath.replace(/^scripts[/\\]/, '');
+        const remoteScript = `/tmp/scripts/${relScript}`;
+
+        // Transfer scripts folder silently — suppress verbose rsync file listing
+        this.sendMessage(ws, { type: 'output', data: 'Syncing scripts…\r\n', timestamp: Date.now() });
+        await sshService.transferScriptsFolder(server,
+          () => {}, // suppress rsync stdout (verbose file listing)
+          (/** @type {string} */ err) => {
+            // Ignore harmless SSH host-key / known-hosts notices from rsync stderr
+            if (!err.includes('Warning:') && !err.includes('Permanently added')) {
+              this.sendMessage(ws, { type: 'error', data: err, timestamp: Date.now() });
+            }
+          }
+        );
+
+        let inContainerCmd;
+
+        if (containerType === 'lxc') {
+          // For LXC we must copy the script from host (/tmp/scripts/...) into the container first.
+          // Otherwise pct exec tries to run a host path that does not exist inside the CT.
+          const remoteTarget = `/tmp/${scriptName}`;
+          const pushCmd = `pct push ${containerId} ${remoteScript} ${remoteTarget}`;
+
+          // Run pct push silently (no terminal output needed for this bookkeeping step)
+          await new Promise((resolve, reject) => {
+            sshService.executeCommand(server, pushCmd,
+              () => {}, // suppress push output
+              () => {}, // suppress push stderr
+              (/** @type {number} */ code) => {
+                if (code === 0) resolve(true);
+                else reject(new Error(`pct push failed with exit code ${code}`));
+              },
+            );
+          });
+
+          inContainerCmd = `pct exec ${containerId} -- bash -c "chmod +x ${remoteTarget}; ${envPrefix}bash ${remoteTarget}"`;
+        } else {
+          // VM execution currently relies on guest exec and assumes script path exists in guest context.
+          inContainerCmd = `qm guest exec ${containerId} -- bash -c "${envPrefix}bash ${remoteScript}"`;
+        }
+
+        this.activeExecutions.set(executionId, { process: null, ws, installationId, outputBuffer: '' });
+
+        // executeCommand resolves immediately with the PTY process — store it so
+        // interactive input (y/n prompts etc.) can be forwarded via sendInputToProcess.
+        const execResult = await sshService.executeCommand(server, inContainerCmd,
+          (/** @type {string} */ data) => {
+            const execution = this.activeExecutions.get(executionId);
+            if (execution) execution.outputBuffer += data;
+            this.sendMessage(ws, { type: 'output', data, timestamp: Date.now() });
+          },
+          (/** @type {string} */ err) => {
+            this.sendMessage(ws, { type: 'error', data: err, timestamp: Date.now() });
+          },
+          async (/** @type {number} */ exitCode) => {
+            const execution = this.activeExecutions.get(executionId);
+            if (installationId && execution) {
+              await this.updateInstallationRecord(installationId, {
+                status: exitCode === 0 ? 'success' : 'failed',
+                output_log: execution.outputBuffer
+              });
+            }
+            this.sendMessage(ws, { type: 'end', data: `Finished with code: ${exitCode}`, timestamp: Date.now() });
+            this.activeExecutions.delete(executionId);
+          }
+        );
+
+        // Attach the real PTY process so keyboard input can reach interactive prompts
+        const storedExec = this.activeExecutions.get(executionId);
+        if (storedExec && execResult && /** @type {any} */(execResult).process) {
+          storedExec.process = /** @type {any} */(execResult).process;
+        }
+        return;
+      }
+
+      // Local mode: pipe the script content into `pct exec <ctid> -- bash`
+      const scriptsDir = join(process.cwd(), 'scripts');
+      const resolvedPath = resolve(scriptPath);
+      if (!resolvedPath.startsWith(resolve(scriptsDir))) {
+        this.sendMessage(ws, { type: 'error', data: 'Script path outside scripts directory', timestamp: Date.now() });
+        if (installationId) await this.updateInstallationRecord(installationId, { status: 'failed' });
+        return;
+      }
+
+      const bashCmd = `${envPrefix}bash ${resolvedPath}`;
+      const args = containerType === 'lxc'
+        ? ['exec', containerId, '--', 'bash', '-c', bashCmd]
+        : ['guest', 'exec', containerId, '--', 'bash', '-c', bashCmd];
+      const cmd = containerType === 'lxc' ? 'pct' : 'qm';
+
+      const childProcess = ptySpawn(cmd, args, {
+        cwd: scriptsDir,
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        env: { ...process.env, TERM: 'xterm-256color' }
+      });
+
+      this.activeExecutions.set(executionId, { process: childProcess, ws, installationId, outputBuffer: '' });
+      this.sendMessage(ws, { type: 'start', data: `Executing inside container ${containerId}…`, timestamp: Date.now() });
+
+      childProcess.onData((data) => {
+        const execution = this.activeExecutions.get(executionId);
+        if (execution) execution.outputBuffer += data;
+        this.sendMessage(ws, { type: 'output', data, timestamp: Date.now() });
+      });
+
+      childProcess.onExit(async (e) => {
+        const execution = this.activeExecutions.get(executionId);
+        if (installationId && execution) {
+          await this.updateInstallationRecord(installationId, {
+            status: e.exitCode === 0 ? 'success' : 'failed',
+            output_log: execution.outputBuffer
+          });
+        }
+        this.sendMessage(ws, { type: 'end', data: `Script finished with code: ${e.exitCode}`, timestamp: Date.now() });
+        this.activeExecutions.delete(executionId);
+      });
+
+    } catch (error) {
+      this.sendMessage(ws, { type: 'error', data: `Failed to start in-container script: ${error instanceof Error ? error.message : String(error)}`, timestamp: Date.now() });
+      if (installationId) await this.updateInstallationRecord(installationId, { status: 'failed' });
     }
   }
 
@@ -1303,7 +1471,7 @@ class ScriptExecutionHandler {
    * @param {ServerInfo|undefined} server
    * @param {string} [backupStorage] - Optional storage to backup to before update
    */
-  async startUpdateExecution(ws, containerId, executionId, mode = 'local', server = undefined, backupStorage = undefined) {
+  async startUpdateExecution(ws, containerId, executionId, mode = 'local', server = undefined, backupStorage = undefined, envVars = {}) {
     try {
       // If backup storage is provided, run backup first
       if (backupStorage && mode === 'ssh' && server) {
@@ -1364,9 +1532,9 @@ class ScriptExecutionHandler {
       });
 
       if (mode === 'ssh' && server) {
-        await this.startSSHUpdateExecution(ws, containerId, executionId, server);
+        await this.startSSHUpdateExecution(ws, containerId, executionId, server, envVars);
       } else {
-        await this.startLocalUpdateExecution(ws, containerId, executionId);
+        await this.startLocalUpdateExecution(ws, containerId, executionId, envVars);
       }
 
     } catch (error) {
@@ -1384,7 +1552,7 @@ class ScriptExecutionHandler {
    * @param {string} containerId
    * @param {string} executionId
    */
-  async startLocalUpdateExecution(ws, containerId, executionId) {
+  async startLocalUpdateExecution(ws, containerId, executionId, envVars = {}) {
     const { spawn } = await import('node-pty');
     
     // Create a shell process that will run pct enter and then update
@@ -1411,9 +1579,24 @@ class ScriptExecutionHandler {
       });
     });
 
+    // Build env export commands (e.g. for PHS_SILENT=1)
+    const envExports = Object.entries(envVars)
+      .filter(([key]) => key.startsWith('PHS_') || key.startsWith('var_'))
+      .map(([key, value]) => {
+        const safeValue = String(value)
+          .replace(/\\/g, '\\\\')
+          .replace(/"/g, '\\"');
+        return `export ${key}="${safeValue}"`;
+      })
+      .join('; ');
+
     // Send the update command after a delay to ensure we're in the container
     setTimeout(() => {
-      childProcess.write('update\n');
+      if (envExports) {
+        childProcess.write(`${envExports}; update\n`);
+      } else {
+        childProcess.write('update\n');
+      }
     }, 4000);
 
     // Handle process exit
@@ -1435,7 +1618,7 @@ class ScriptExecutionHandler {
    * @param {string} executionId
    * @param {ServerInfo} server
    */
-  async startSSHUpdateExecution(ws, containerId, executionId, server) {
+  async startSSHUpdateExecution(ws, containerId, executionId, server, envVars = {}) {
     const sshService = getSSHExecutionService();
     
     try {
@@ -1476,9 +1659,24 @@ class ScriptExecutionHandler {
         ws
       });
 
+      // Build env export commands (e.g. for PHS_SILENT=1)
+      const envExports = Object.entries(envVars)
+        .filter(([key]) => key.startsWith('PHS_') || key.startsWith('var_'))
+        .map(([key, value]) => {
+          const safeValue = String(value)
+            .replace(/\\/g, '\\\\')
+            .replace(/"/g, '\\"');
+          return `export ${key}="${safeValue}"`;
+        })
+        .join('; ');
+
       // Send the update command after a delay to ensure we're in the container
       setTimeout(() => {
-        /** @type {any} */ (execution).process.write('update\n');
+        if (envExports) {
+          /** @type {any} */ (execution).process.write(`${envExports}; update\n`);
+        } else {
+          /** @type {any} */ (execution).process.write('update\n');
+        }
       }, 4000);
 
     } catch (error) {

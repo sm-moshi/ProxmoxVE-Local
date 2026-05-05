@@ -68,11 +68,15 @@ export interface PBScript extends PBScriptCard {
   config_path: string | null;
   default_user: string | null;
   default_passwd: string | null;
-  install_methods_json: PBInstallMethod[];
-  notes_json: PBNote[];
+  install_methods: PBInstallMethod[];
+  notes: PBNote[];
   version: string | null;
   github: string | null;
   execute_in: string[];
+  github_data: Record<string, unknown> | null;
+  deleted_message: string | null;
+  disable_message: string | null;
+  last_update_commit: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,10 +145,14 @@ function toScript(record: Record<string, unknown>): PBScript {
     config_path: (record.config_path as string | null) ?? null,
     default_user: (record.default_user as string | null) ?? null,
     default_passwd: (record.default_passwd as string | null) ?? null,
-    install_methods_json: parseJsonField<PBInstallMethod>(
-      record.install_methods_json,
+    install_methods: parseJsonField<PBInstallMethod>(
+      record.install_methods,
     ),
-    notes_json: parseJsonField<PBNote>(record.notes_json),
+    notes: parseJsonField<PBNote>(record.notes),
+    github_data: (record.github_data as Record<string, unknown> | null) ?? null,
+    deleted_message: (record.deleted_message as string | null) ?? null,
+    disable_message: (record.disable_message as string | null) ?? null,
+    last_update_commit: (record.last_update_commit as string | null) ?? null,
     version: (record.version as string | null) ?? null,
     github: (record.github as string | null) ?? null,
     execute_in: parseJsonField<string>(record.execute_in),
@@ -158,6 +166,33 @@ function toScript(record: Record<string, unknown>): PBScript {
 const CARD_FIELDS =
   "id,slug,name,description,logo,type,categories,is_dev,has_arm,is_disabled,is_deleted,privileged,port,updateable,website,documentation,script_created,script_updated,expand.categories.*,expand.type.*";
 
+// ---------------------------------------------------------------------------
+// Server-side in-memory cache (PB data rarely changes, only on resync)
+// ---------------------------------------------------------------------------
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+interface CacheEntry<T> {
+  data: T;
+  ts: number;
+}
+
+const _cache: Record<string, CacheEntry<unknown>> = {};
+
+function getCached<T>(key: string): T | null {
+  const entry = _cache[key] as CacheEntry<T> | undefined;
+  if (entry && Date.now() - entry.ts < CACHE_TTL) return entry.data;
+  return null;
+}
+
+function setCache<T>(key: string, data: T): void {
+  _cache[key] = { data, ts: Date.now() };
+}
+
+/** Invalidate all cached PB data (call after resync). */
+export function invalidatePbCache(): void {
+  for (const key of Object.keys(_cache)) delete _cache[key];
+}
+
  
 
 /**
@@ -165,6 +200,9 @@ const CARD_FIELDS =
  * Suitable for the script listing UI.
  */
 export async function getScriptCards(): Promise<PBScriptCard[]> {
+  const cached = getCached<PBScriptCard[]>("scriptCards");
+  if (cached) return cached;
+
   const pb = getPb();
   const records = await withPbRetry(() =>
     pb.collection("script_scripts").getFullList({
@@ -174,13 +212,18 @@ export async function getScriptCards(): Promise<PBScriptCard[]> {
       fields: CARD_FIELDS,
     }),
   );
-  return records.map((r) => toCard(r as unknown as Record<string, unknown>));
+  const cards = records.map((r) => toCard(r as unknown as Record<string, unknown>));
+  setCache("scriptCards", cards);
+  return cards;
 }
 
 /**
  * Fetch all categories, sorted.
  */
 export async function getCategories(): Promise<PBCategory[]> {
+  const cached = getCached<PBCategory[]>("categories");
+  if (cached) return cached;
+
   const pb = getPb();
   const records = await withPbRetry(() =>
     pb.collection("script_categories").getFullList({
@@ -188,13 +231,18 @@ export async function getCategories(): Promise<PBCategory[]> {
       batch: 100,
     }),
   );
-  return records as unknown as PBCategory[];
+  const cats = records as unknown as PBCategory[];
+  setCache("categories", cats);
+  return cats;
 }
 
 /**
  * Fetch all script types.
  */
 export async function getScriptTypes(): Promise<PBScriptType[]> {
+  const cached = getCached<PBScriptType[]>("scriptTypes");
+  if (cached) return cached;
+
   const pb = getPb();
   const records = await withPbRetry(() =>
     pb.collection("z_ref_script_types").getFullList({
@@ -202,7 +250,9 @@ export async function getScriptTypes(): Promise<PBScriptType[]> {
       batch: 100,
     }),
   );
-  return records as unknown as PBScriptType[];
+  const types = records as unknown as PBScriptType[];
+  setCache("scriptTypes", types);
+  return types;
 }
 
 /**

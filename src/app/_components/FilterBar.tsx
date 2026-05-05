@@ -6,24 +6,41 @@ import { ContextualHelpIcon } from "./ContextualHelpIcon";
 import {
   Package,
   Monitor,
-  Wrench,
-  Server,
   FileText,
   Calendar,
   RefreshCw,
   Filter,
   GitBranch,
+  Layers,
+  TrendingUp,
+  Sparkles,
+  Clock,
+  TrendingDown,
+  FlaskConical,
+  Cpu,
+  Settings2,
 } from "lucide-react";
 import { api } from "~/trpc/react";
 import { getDefaultFilters } from "./filterUtils";
+
+export type QuickFilter =
+  | "all"
+  | "popular"
+  | "new"
+  | "updated"
+  | "unpopular"
+  | "dev"
+  | "arm";
 
 export interface FilterState {
   searchQuery: string;
   showUpdatable: boolean | null; // null = all, true = only updatable, false = only non-updatable
   selectedTypes: string[]; // Array of selected types: 'lxc', 'vm', 'addon', 'pve'
   selectedRepositories: string[]; // Array of selected repository URLs
-  sortBy: "name" | "created"; // Sort criteria (removed 'updated')
+  sortBy: "name" | "created" | "updated"; // Sort criteria
   sortOrder: "asc" | "desc"; // Sort direction
+  quickFilter: QuickFilter;
+  selectedCategory: string | null; // null = all categories
 }
 
 interface FilterBarProps {
@@ -34,13 +51,17 @@ interface FilterBarProps {
   updatableCount?: number;
   saveFiltersEnabled?: boolean;
   isLoadingFilters?: boolean;
+  categories?: string[];
+  categoryCounts?: Record<string, number>;
+  showDevScripts?: boolean;
 }
 
 const SCRIPT_TYPES = [
   { value: "ct", label: "LXC Container", Icon: Package },
   { value: "vm", label: "Virtual Machine", Icon: Monitor },
-  { value: "addon", label: "Add-on", Icon: Wrench },
-  { value: "pve", label: "PVE Host", Icon: Server },
+  { value: "pve", label: "PVE Tools", Icon: Settings2 },
+  { value: "addon", label: "Addons", Icon: Sparkles },
+  { value: "turnkey", label: "TurnKey", Icon: FileText },
 ];
 
 export function FilterBar({
@@ -51,9 +72,13 @@ export function FilterBar({
   updatableCount = 0,
   saveFiltersEnabled = false,
   isLoadingFilters = false,
+  categories = [],
+  categoryCounts = {},
+  showDevScripts = false,
 }: FilterBarProps) {
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
   const [isSortDropdownOpen, setIsSortDropdownOpen] = useState(false);
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
 
   // Fetch enabled repositories
@@ -86,8 +111,10 @@ export function FilterBar({
     filters.showUpdatable !== null ||
     filters.selectedTypes.length > 0 ||
     filters.selectedRepositories.length > 0 ||
+    filters.selectedCategory !== null ||
     filters.sortBy !== "name" ||
-    filters.sortOrder !== "asc";
+    filters.sortOrder !== "asc" ||
+    filters.quickFilter !== "all";
 
   const getUpdatableButtonText = () => {
     if (filters.showUpdatable === null) return "Updatable: All";
@@ -158,6 +185,35 @@ export function FilterBar({
       {/* Filter Content - Conditionally rendered based on minimized state */}
       {!isMinimized && !isLoadingFilters && (
         <>
+          {/* Quick Filters */}
+          <div className="mb-4 flex flex-wrap gap-2">
+            {[
+              { key: "all" as const, label: "All", Icon: Layers },
+              { key: "new" as const, label: "New", Icon: Sparkles },
+              { key: "updated" as const, label: "Updated", Icon: Clock },
+              ...(showDevScripts
+                ? [{ key: "dev" as const, label: "In Dev", Icon: FlaskConical }]
+                : []),
+              { key: "arm" as const, label: "ARM", Icon: Cpu },
+            ].map(({ key, label, Icon }) => {
+              const isActive = filters.quickFilter === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => updateFilters({ quickFilter: key })}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    isActive
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-muted/50 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
           {/* Search Bar */}
           <div className="mb-4">
             <div className="relative w-full max-w-md">
@@ -320,6 +376,84 @@ export function FilterBar({
             </div>
 
             {/* Repository Filter Buttons - Only show if more than one enabled repo */}
+            {categories.length > 0 && (
+              <div className="relative w-full sm:w-auto">
+                <Button
+                  onClick={() =>
+                    setIsCategoryDropdownOpen(!isCategoryDropdownOpen)
+                  }
+                  variant="outline"
+                  size="default"
+                  className={`flex w-full items-center justify-center space-x-2 ${
+                    filters.selectedCategory
+                      ? "border-primary/20 bg-primary/10 text-primary border"
+                      : "bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  }`}
+                >
+                  <Layers className="h-4 w-4" />
+                  <span>{filters.selectedCategory ?? "All Categories"}</span>
+                  <svg
+                    className={`h-4 w-4 transition-transform ${isCategoryDropdownOpen ? "rotate-180" : ""}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 9l-7 7-7-7"
+                    />
+                  </svg>
+                </Button>
+
+                {isCategoryDropdownOpen && (
+                  <div className="border-border bg-card absolute top-full left-0 z-10 mt-1 max-h-72 w-56 overflow-y-auto rounded-lg border shadow-lg">
+                    <div className="p-2">
+                      <button
+                        onClick={() => {
+                          updateFilters({ selectedCategory: null });
+                          setIsCategoryDropdownOpen(false);
+                        }}
+                        className={`hover:bg-accent flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm ${
+                          filters.selectedCategory === null
+                            ? "bg-primary/10 text-primary"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        <span>All Categories</span>
+                        <span className="text-xs opacity-60">
+                          {totalScripts}
+                        </span>
+                      </button>
+                      {categories.map((cat) => (
+                        <button
+                          key={cat}
+                          onClick={() => {
+                            updateFilters({ selectedCategory: cat });
+                            setIsCategoryDropdownOpen(false);
+                          }}
+                          className={`hover:bg-accent flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm ${
+                            filters.selectedCategory === cat
+                              ? "bg-primary/10 text-primary"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          <span>{cat}</span>
+                          {categoryCounts[cat] != null && (
+                            <span className="text-xs opacity-60">
+                              {categoryCounts[cat]}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Repository Filter Buttons - Only show if more than one enabled repo */}
             {enabledRepos.length > 1 &&
               enabledRepos.map((repo: { id: number; url: string }) => {
                 const repoUrl = String(repo.url);
@@ -372,7 +506,11 @@ export function FilterBar({
                   <Calendar className="h-4 w-4" />
                 )}
                 <span>
-                  {filters.sortBy === "name" ? "By Name" : "By Created Date"}
+                  {filters.sortBy === "name"
+                    ? "By Name"
+                    : filters.sortBy === "created"
+                      ? "By Created Date"
+                      : "By Updated Date"}
                 </span>
                 <svg
                   className={`h-4 w-4 transition-transform ${isSortDropdownOpen ? "rotate-180" : ""}`}
@@ -419,6 +557,20 @@ export function FilterBar({
                     >
                       <Calendar className="h-4 w-4" />
                       <span className="text-sm">By Created Date</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        updateFilters({ sortBy: "updated" });
+                        setIsSortDropdownOpen(false);
+                      }}
+                      className={`hover:bg-accent flex w-full items-center space-x-3 rounded-md px-3 py-2 text-left ${
+                        filters.sortBy === "updated"
+                          ? "bg-primary/10 text-primary"
+                          : "text-muted-foreground"
+                      }`}
+                    >
+                      <Calendar className="h-4 w-4" />
+                      <span className="text-sm">By Updated Date</span>
                     </button>
                   </div>
                 </div>
@@ -541,12 +693,13 @@ export function FilterBar({
       )}
 
       {/* Click outside to close dropdowns */}
-      {(isTypeDropdownOpen || isSortDropdownOpen) && (
+      {(isTypeDropdownOpen || isSortDropdownOpen || isCategoryDropdownOpen) && (
         <div
           className="fixed inset-0 z-0"
           onClick={() => {
             setIsTypeDropdownOpen(false);
             setIsSortDropdownOpen(false);
+            setIsCategoryDropdownOpen(false);
           }}
         />
       )}

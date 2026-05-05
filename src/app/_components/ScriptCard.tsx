@@ -1,22 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import Image from "next/image";
-import type { ScriptCard } from "~/types/script";
-import { TypeBadge, UpdateableBadge } from "./Badge";
+import type { ScriptCard as ScriptCardType } from "~/types/script";
+import { TypeBadge, UpdateableBadge, DevBadge } from "./Badge";
+import { Terminal } from "lucide-react";
 
 interface ScriptCardProps {
-  script: ScriptCard;
-  onClick: (script: ScriptCard) => void;
+  script: ScriptCardType;
+  onClick: (script: ScriptCardType) => void;
   isSelected?: boolean;
   onToggleSelect?: (slug: string) => void;
+  onShell?: () => void;
 }
 
-export function ScriptCard({
+export const ScriptCard = memo(function ScriptCard({
   script,
   onClick,
   isSelected = false,
   onToggleSelect,
+  onShell,
 }: ScriptCardProps) {
   const [imageError, setImageError] = useState(false);
 
@@ -42,8 +45,10 @@ export function ScriptCard({
 
   return (
     <div
-      className="bg-card border-border hover:border-primary relative flex h-full cursor-pointer flex-col rounded-lg border shadow-md transition-shadow duration-200 hover:shadow-lg"
+      className={`glass-card animate-card-in relative flex h-full cursor-pointer flex-col overflow-hidden border p-0 ${script.is_dev ? "border-violet-500/40 bg-violet-500/[0.03]" : ""}`}
       onClick={() => onClick(script)}
+      role="button"
+      aria-label={`View details for ${script.name || "script"}`}
     >
       {/* Checkbox in top-left corner */}
       {onToggleSelect && (
@@ -55,6 +60,9 @@ export function ScriptCard({
                 : "bg-card border-border hover:border-primary/60 hover:bg-accent"
             }`}
             onClick={handleCheckboxClick}
+            role="checkbox"
+            aria-checked={isSelected}
+            aria-label={`Select ${script.name || "script"}`}
           >
             {isSelected && (
               <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
@@ -98,7 +106,13 @@ export function ScriptCard({
               {/* Type and Updateable status on first row */}
               <div className="flex flex-wrap items-center gap-1 space-x-2">
                 <TypeBadge type={script.type ?? "unknown"} />
+                {script.is_dev && <DevBadge />}
                 {script.updateable && <UpdateableBadge />}
+                {script.version && (
+                  <span className="bg-primary/10 text-primary rounded px-1.5 py-0.5 text-[10px] font-medium">
+                    v{script.version}
+                  </span>
+                )}
                 {script.repository_url && (
                   <span
                     className="bg-muted text-muted-foreground border-border rounded border px-2 py-0.5 text-xs"
@@ -133,34 +147,52 @@ export function ScriptCard({
           {script.description || "No description available"}
         </p>
 
-        {/* Footer with website link */}
-        {script.website && (
-          <div className="mt-auto">
-            <a
-              href={script.website}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-info hover:text-info/80 flex items-center space-x-1 text-sm font-medium"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <span>Website</span>
-              <svg
-                className="h-3 w-3"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+        {/* Footer */}
+        {(script.website || onShell) && (
+          <div className="mt-auto flex items-center justify-between gap-2">
+            {script.website ? (
+              <a
+                href={script.website}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-info hover:text-info/80 flex items-center space-x-1 text-sm font-medium"
+                onClick={(e) => e.stopPropagation()}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                />
-              </svg>
-            </a>
+                <span>Website</span>
+                <svg
+                  className="h-3 w-3"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                  />
+                </svg>
+              </a>
+            ) : (
+              <span />
+            )}
+            {onShell && (
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground hover:bg-muted flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onShell();
+                }}
+                title="Open shell"
+              >
+                <Terminal className="h-3.5 w-3.5" />
+                Shell
+              </button>
+            )}
           </div>
         )}
       </div>
     </div>
   );
-}
+});

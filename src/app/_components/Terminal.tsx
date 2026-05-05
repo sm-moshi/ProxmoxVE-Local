@@ -14,17 +14,23 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Palette,
 } from "lucide-react";
+
+import type { Server } from "~/types/server";
 
 interface TerminalProps {
   scriptPath: string;
   onClose: () => void;
   mode?: "local" | "ssh";
-  server?: any;
+  server?: Server;
   isUpdate?: boolean;
   isShell?: boolean;
   isBackup?: boolean;
   isClone?: boolean;
+  /** When true the script is executed INSIDE the target container via pct exec,
+   *  rather than on the PVE host. Requires containerId + containerType. */
+  executeInContainer?: boolean;
   containerId?: string;
   storage?: string;
   backupStorage?: string;
@@ -41,6 +47,152 @@ interface TerminalMessage {
   timestamp: number;
 }
 
+type TerminalThemeMode = "midnight" | "matrix" | "amber" | "paper";
+
+const TERMINAL_THEMES: Record<TerminalThemeMode, any> = {
+  midnight: {
+    background: "#0d1117",
+    foreground: "#e6edf3",
+    cursor: "#58a6ff",
+    cursorAccent: "#0d1117",
+    selectionBackground: "#264f78",
+    selectionForeground: "#ffffff",
+    black: "#484f58",
+    red: "#f85149",
+    green: "#3fb950",
+    yellow: "#d29922",
+    blue: "#58a6ff",
+    magenta: "#bc8cff",
+    cyan: "#39d353",
+    white: "#b1bac4",
+    brightBlack: "#6e7681",
+    brightRed: "#ff7b72",
+    brightGreen: "#56d364",
+    brightYellow: "#e3b341",
+    brightBlue: "#79c0ff",
+    brightMagenta: "#d2a8ff",
+    brightCyan: "#56d364",
+    brightWhite: "#f0f6fc",
+  },
+  matrix: {
+    background: "#030806",
+    foreground: "#8cff9f",
+    cursor: "#39ff14",
+    cursorAccent: "#030806",
+    selectionBackground: "#145a1f",
+    selectionForeground: "#d7ffe0",
+    black: "#0f2615",
+    red: "#5cff7b",
+    green: "#39ff14",
+    yellow: "#89ff6b",
+    blue: "#16c172",
+    magenta: "#6cffaa",
+    cyan: "#41e29d",
+    white: "#baffc8",
+    brightBlack: "#235f33",
+    brightRed: "#87ff9d",
+    brightGreen: "#7dff63",
+    brightYellow: "#b6ff8a",
+    brightBlue: "#2fe59a",
+    brightMagenta: "#8fffc9",
+    brightCyan: "#9dffd8",
+    brightWhite: "#e9fff0",
+  },
+  amber: {
+    background: "#1a1203",
+    foreground: "#ffcf66",
+    cursor: "#ff9e00",
+    cursorAccent: "#1a1203",
+    selectionBackground: "#7a4f00",
+    selectionForeground: "#ffe1a3",
+    black: "#3a2500",
+    red: "#ff8b32",
+    green: "#ffb347",
+    yellow: "#ffd166",
+    blue: "#ff9f43",
+    magenta: "#ffbe76",
+    cyan: "#ffb86b",
+    white: "#ffe0a8",
+    brightBlack: "#7a4f00",
+    brightRed: "#ff9f43",
+    brightGreen: "#ffc46d",
+    brightYellow: "#ffe08a",
+    brightBlue: "#ffb861",
+    brightMagenta: "#ffd190",
+    brightCyan: "#ffe1b0",
+    brightWhite: "#fff0d0",
+  },
+  paper: {
+    background: "#f7f3e9",
+    foreground: "#2f2a1f",
+    cursor: "#0b68d1",
+    cursorAccent: "#f7f3e9",
+    selectionBackground: "#cfe3ff",
+    selectionForeground: "#1e3a5f",
+    black: "#3d382c",
+    red: "#b53a2d",
+    green: "#2f7a45",
+    yellow: "#9a6b12",
+    blue: "#275fc4",
+    magenta: "#8a3fa0",
+    cyan: "#1c7e8c",
+    white: "#f7f3e9",
+    brightBlack: "#6b6455",
+    brightRed: "#cc4c3d",
+    brightGreen: "#3f9659",
+    brightYellow: "#b6872e",
+    brightBlue: "#3e79de",
+    brightMagenta: "#a157bc",
+    brightCyan: "#2f9eae",
+    brightWhite: "#ffffff",
+  },
+};
+
+const THEME_META: Record<
+  TerminalThemeMode,
+  {
+    label: string;
+    subtitle: string;
+    bg: string;
+    fg: string;
+    accent: string;
+    sample: string;
+  }
+> = {
+  midnight: {
+    label: "Midnight",
+    subtitle: "GitHub dark",
+    bg: "#0d1117",
+    fg: "#e6edf3",
+    accent: "#58a6ff",
+    sample: "root@pve:~# ./install.sh",
+  },
+  matrix: {
+    label: "Matrix",
+    subtitle: "Neon green",
+    bg: "#030806",
+    fg: "#8cff9f",
+    accent: "#39ff14",
+    sample: "[OK] Service started",
+  },
+  amber: {
+    label: "Amber",
+    subtitle: "Retro CRT",
+    bg: "#1a1203",
+    fg: "#ffcf66",
+    accent: "#ff9e00",
+    sample: "Install Arcane? (y/N)",
+  },
+  paper: {
+    label: "Paper",
+    subtitle: "High-contrast light",
+    bg: "#f7f3e9",
+    fg: "#2f2a1f",
+    accent: "#0b68d1",
+    sample: "container#102 running",
+  },
+};
+
 export function Terminal({
   scriptPath,
   onClose,
@@ -50,6 +202,7 @@ export function Terminal({
   isShell = false,
   isBackup = false,
   isClone = false,
+  executeInContainer = false,
   containerId,
   storage,
   backupStorage,
@@ -68,6 +221,24 @@ export function Terminal({
   const [isMobile, setIsMobile] = useState(false);
   const [isStopped, setIsStopped] = useState(false);
   const [isTerminalReady, setIsTerminalReady] = useState(false);
+  const [themeMode, setThemeMode] = useState<TerminalThemeMode>("midnight");
+  const [showThemePicker, setShowThemePicker] = useState(false);
+  const themePickerRef = useRef<HTMLDivElement>(null);
+
+  // Close theme picker when clicking outside
+  useEffect(() => {
+    if (!showThemePicker) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (
+        themePickerRef.current &&
+        !themePickerRef.current.contains(e.target as Node)
+      ) {
+        setShowThemePicker(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [showThemePicker]);
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<any>(null);
   const fitAddonRef = useRef<any>(null);
@@ -176,7 +347,26 @@ export function Terminal({
     setIsClient(true);
     // Detect mobile on mount
     setIsMobile(window.innerWidth < 768);
+
+    const storedTheme = window.localStorage.getItem("terminalTheme");
+    if (
+      storedTheme === "midnight" ||
+      storedTheme === "matrix" ||
+      storedTheme === "amber" ||
+      storedTheme === "paper"
+    ) {
+      setThemeMode(storedTheme);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!isClient) return;
+    window.localStorage.setItem("terminalTheme", themeMode);
+    if (xtermRef.current) {
+      xtermRef.current.setOption("theme", TERMINAL_THEMES[themeMode]);
+      xtermRef.current.refresh(0, xtermRef.current.rows - 1);
+    }
+  }, [themeMode, isClient]);
 
   useEffect(() => {
     // Only initialize on client side
@@ -197,29 +387,7 @@ export function Terminal({
       // Use the mobile state
 
       const terminal = new XTerm({
-        theme: {
-          background: "#0d1117",
-          foreground: "#e6edf3",
-          cursor: "#58a6ff",
-          cursorAccent: "#0d1117",
-          // Let ANSI colors work naturally - only define basic colors
-          black: "#484f58",
-          red: "#f85149",
-          green: "#3fb950",
-          yellow: "#d29922",
-          blue: "#58a6ff",
-          magenta: "#bc8cff",
-          cyan: "#39d353",
-          white: "#b1bac4",
-          brightBlack: "#6e7681",
-          brightRed: "#ff7b72",
-          brightGreen: "#56d364",
-          brightYellow: "#e3b341",
-          brightBlue: "#79c0ff",
-          brightMagenta: "#d2a8ff",
-          brightCyan: "#56d364",
-          brightWhite: "#f0f6fc",
-        },
+        theme: TERMINAL_THEMES[themeMode],
         fontSize: isMobile ? 7 : 14,
         fontFamily:
           "JetBrains Mono, Fira Code, Cascadia Code, Monaco, Menlo, Ubuntu Mono, monospace",
@@ -346,7 +514,7 @@ export function Terminal({
         setIsTerminalReady(false);
       }
     };
-  }, [isClient, isMobile]);
+  }, [isClient, isMobile, themeMode]);
 
   // Handle terminal input with current executionId
   useEffect(() => {
@@ -430,6 +598,7 @@ export function Terminal({
             isShell,
             isBackup,
             isClone,
+            executeInContainer,
             containerId,
             storage,
             backupStorage,
@@ -570,8 +739,8 @@ export function Terminal({
   // Don't render on server side
   if (!isClient) {
     return (
-      <div className="bg-card border-border overflow-hidden rounded-lg border">
-        <div className="bg-muted border-border flex items-center justify-between border-b px-4 py-2">
+      <div className="glass-card-static overflow-hidden border">
+        <div className="bg-secondary/50 border-border/60 flex items-center justify-between border-b px-4 py-2">
           <div className="flex items-center space-x-2">
             <div className="flex space-x-1">
               <div className="h-3 w-3 rounded-full bg-red-500"></div>
@@ -591,9 +760,9 @@ export function Terminal({
   }
 
   return (
-    <div className="bg-card border-border overflow-hidden rounded-lg border">
+    <div className="glass-card-static overflow-hidden border">
       {/* Terminal Header */}
-      <div className="bg-muted border-border flex items-center justify-between border-b px-2 py-2 sm:px-4">
+      <div className="bg-secondary/50 border-border/60 flex items-center justify-between border-b px-2 py-2 sm:px-4">
         <div className="flex min-w-0 flex-1 items-center space-x-2">
           <div className="flex flex-shrink-0 space-x-1">
             <div className="h-2 w-2 rounded-full bg-red-500 sm:h-3 sm:w-3"></div>
@@ -606,6 +775,75 @@ export function Terminal({
         </div>
 
         <div className="flex flex-shrink-0 items-center space-x-1 sm:space-x-2">
+          {/* Theme picker */}
+          <div className="relative" ref={themePickerRef}>
+            <button
+              onClick={() => setShowThemePicker((v) => !v)}
+              className="text-muted-foreground hover:text-foreground hover:bg-accent rounded p-1 transition-colors"
+              title="Change terminal theme"
+            >
+              <Palette className="h-3.5 w-3.5" />
+            </button>
+            {showThemePicker && (
+              <div className="bg-popover border-border absolute top-full right-0 z-50 mt-1 w-64 rounded-lg border p-2 shadow-xl">
+                <p className="text-muted-foreground mb-2 px-1 text-[10px] font-medium tracking-wider uppercase">
+                  Terminal Theme
+                </p>
+                <div className="space-y-1.5">
+                  {(Object.keys(THEME_META) as TerminalThemeMode[]).map(
+                    (key) => {
+                      const meta = THEME_META[key];
+                      const active = themeMode === key;
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => {
+                            setThemeMode(key);
+                            setShowThemePicker(false);
+                          }}
+                          className={`w-full rounded-md border px-2 py-2 text-left transition-all ${
+                            active
+                              ? "border-primary ring-primary/30 ring-1"
+                              : "border-border hover:border-border/80"
+                          }`}
+                          style={{ background: meta.bg, color: meta.fg }}
+                          title={meta.label}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="h-3 w-3 flex-shrink-0 rounded-full"
+                                style={{ background: meta.accent }}
+                              />
+                              <div>
+                                <div className="text-xs font-semibold">
+                                  {meta.label}
+                                </div>
+                                <div className="opacity-75 text-[10px]">
+                                  {meta.subtitle}
+                                </div>
+                              </div>
+                            </div>
+                            {active && (
+                              <span className="text-[10px] font-semibold opacity-90">
+                                Active
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className="mt-1 rounded border px-1.5 py-1 font-mono text-[10px]"
+                            style={{ borderColor: `${meta.accent}55` }}
+                          >
+                            {meta.sample}
+                          </div>
+                        </button>
+                      );
+                    },
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <div
             className={`h-2 w-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`}
           ></div>
@@ -618,7 +856,7 @@ export function Terminal({
       {/* Terminal Output */}
       <div
         ref={terminalRef}
-        className={`mx-auto h-[16rem] w-full max-w-4xl sm:h-[24rem] lg:h-[32rem] ${isMobile ? "mobile-terminal" : ""}`}
+        className={`h-[16rem] w-full sm:h-[24rem] lg:h-[32rem] ${isMobile ? "mobile-terminal" : ""}`}
         style={{
           minHeight: "256px",
         }}
@@ -752,7 +990,7 @@ export function Terminal({
                 onChange={(e) => setMobileInput(e.target.value)}
                 placeholder="Type command..."
                 className="border-border bg-background text-foreground placeholder:text-muted-foreground focus:ring-primary flex-1 rounded-md border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-                onKeyPress={(e) => {
+                onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     handleMobileInput(mobileInput);
                   }

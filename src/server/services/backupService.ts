@@ -323,9 +323,10 @@ class BackupService {
     }
     
     // Build login command
-    // Format: proxmox-backup-client login --repository root@pam@<IP>:<DATASTORE>
+    // Format: proxmox-backup-client login --repository <user>@<IP>:<DATASTORE>
     // PBS supports PBS_PASSWORD and PBS_REPOSITORY environment variables for non-interactive login
-    const repository = `root@pam@${pbsIp}:${pbsDatastore}`;
+    const pbsUsername = credential.pbs_username ?? 'root@pam';
+    const repository = `${pbsUsername}@${pbsIp}:${pbsDatastore}`;
     
     // Escape password and fingerprint for shell safety (single quotes)
     const escapedPassword = credential.pbs_password.replace(/'/g, "'\\''");
@@ -426,8 +427,10 @@ class BackupService {
     const escapedFingerprint = fingerprint ? fingerprint.replace(/'/g, "'\\''") : '';
     const snapshotEnvParts = escapedFingerprint ? [`PBS_FINGERPRINT='${escapedFingerprint}'`] : [];
     const snapshotEnvStr = snapshotEnvParts.length ? snapshotEnvParts.join(' ') + ' ' : '';
+    // Include --ns flag if the storage has a namespace configured
+    const pbsNamespace = (storage as any).namespace ? `--ns ${(storage as any).namespace}` : '';
     // Use correct command: snapshot list ct/<CT_ID> --repository <full_repo_string>
-    const command = `${snapshotEnvStr}timeout 30 proxmox-backup-client snapshot list ct/${ctId} --repository ${repository} 2>&1 || echo "PBS_ERROR"`;
+    const command = `${snapshotEnvStr}timeout 30 proxmox-backup-client snapshot list ct/${ctId} --repository ${repository} ${pbsNamespace} 2>&1 || echo "PBS_ERROR"`;
     let output = '';
     
     console.log(`[BackupService] Discovering PBS backups for CT ${ctId} on repository ${repository}`);

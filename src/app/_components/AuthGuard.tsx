@@ -1,57 +1,35 @@
-'use client';
+"use client";
 
-import { useState, useEffect, type ReactNode } from 'react';
-import { useAuth } from './AuthProvider';
-import { AuthModal } from './AuthModal';
-import { SetupModal } from './SetupModal';
+import { useState, type ReactNode } from "react";
+import { useAuth } from "./AuthProvider";
+import { AuthModal } from "./AuthModal";
+import { SetupModal } from "./SetupModal";
 
 interface AuthGuardProps {
   children: ReactNode;
 }
 
-interface AuthConfig {
-  username: string | null;
-  enabled: boolean;
-  hasCredentials: boolean;
-  setupCompleted: boolean;
-}
-
 export function AuthGuard({ children }: AuthGuardProps) {
-  const { isAuthenticated, isLoading } = useAuth();
-  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
-  const [configLoading, setConfigLoading] = useState(true);
-  const [setupCompleted, setSetupCompleted] = useState(false);
+  const {
+    isAuthenticated,
+    isLoading,
+    setupCompleted,
+    authEnabled,
+    refreshConfig,
+  } = useAuth();
+  const [localSetupCompleted, setLocalSetupCompleted] = useState(false);
 
   const handleSetupComplete = async () => {
-    setSetupCompleted(true);
-    // Refresh auth config without reloading the page
-    await fetchAuthConfig();
+    setLocalSetupCompleted(true);
+    await refreshConfig();
   };
 
-  const fetchAuthConfig = async () => {
-    try {
-      const response = await fetch('/api/settings/auth-credentials');
-      if (response.ok) {
-        const config = await response.json() as AuthConfig;
-        setAuthConfig(config);
-      }
-    } catch (error) {
-      console.error('Error fetching auth config:', error);
-    } finally {
-      setConfigLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void fetchAuthConfig();
-  }, []);
-
-  // Show loading while checking auth status
-  if (isLoading || configLoading) {
+  // Show loading while AuthProvider is still checking
+  if (isLoading || setupCompleted === null) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="bg-background flex min-h-screen items-center justify-center">
         <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4"></div>
+          <div className="border-primary mb-4 inline-block h-8 w-8 animate-spin rounded-full border-b-2"></div>
           <p className="text-muted-foreground">Loading...</p>
         </div>
       </div>
@@ -59,12 +37,12 @@ export function AuthGuard({ children }: AuthGuardProps) {
   }
 
   // Show setup modal if setup has not been completed yet
-  if (authConfig && !authConfig.setupCompleted && !setupCompleted) {
+  if (!setupCompleted && !localSetupCompleted) {
     return <SetupModal isOpen={true} onComplete={handleSetupComplete} />;
   }
 
   // Show auth modal if auth is enabled but user is not authenticated
-  if (authConfig && authConfig.enabled && !isAuthenticated) {
+  if (authEnabled && !isAuthenticated) {
     return <AuthModal isOpen={true} />;
   }
 
