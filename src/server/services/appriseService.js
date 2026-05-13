@@ -1,5 +1,30 @@
 import axios from "axios";
 
+/**
+ * @param {string} url
+ */
+function redactNotificationUrl(url) {
+  if (!url || typeof url !== "string") {
+    return "[redacted]";
+  }
+
+  const gotifyMatch = url.match(/^(gotifys?:\/\/[^/]+)\/.+$/i);
+  if (gotifyMatch) {
+    return `${gotifyMatch[1]}/[redacted]`;
+  }
+
+  try {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.searchParams.has("token")) {
+      parsedUrl.searchParams.set("token", "[redacted]");
+    }
+    return parsedUrl.toString();
+  } catch {
+    const hostMatch = url.match(/^([a-z][a-z0-9+.-]*:\/\/[^/]+)(?:\/.*)?$/i);
+    return hostMatch ? `${hostMatch[1]}/[redacted]` : "[redacted]";
+  }
+}
+
 export class AppriseService {
   constructor() {
     this.baseUrl = "http://localhost:8080"; // Default Apprise API URL
@@ -9,11 +34,11 @@ export class AppriseService {
    * Send notification via Apprise
    * @param {string} title - Notification title
    * @param {string} body - Notification body
-   * @param {string[]} urls - Array of Apprise URLs
+   * @param {string[]} urls - Array of Gotify or Apprise-compatible URLs
    */
   async sendNotification(title, body, urls) {
     if (!urls || urls.length === 0) {
-      throw new Error("No Apprise URLs provided");
+      throw new Error("No notification URLs provided");
     }
 
     try {
@@ -29,8 +54,11 @@ export class AppriseService {
         try {
           let response;
 
-          // Detect Gotify URLs and use native Gotify API
-          // Gotify format: gotify://hostname/token, gotifys://hostname/token (HTTPS), or https://hostname/gotify?token=xxx
+          // Detect Gotify URLs and use the native Gotify API.
+          // Supported formats:
+          // - gotify://hostname/token
+          // - gotifys://hostname/token
+          // - https://hostname/message?token=xxx
           const gotifyMatch = url.match(/^gotifys?:\/\/([^/]+)\/(.+)$/);
           const gotifyHttpMatch = url.match(/^(https?:\/\/[^?]+)\?token=(.+)$/);
           // gotifys:// uses HTTPS, gotify:// uses HTTP
@@ -83,16 +111,19 @@ export class AppriseService {
           }
 
           results.push({
-            url,
+            url: redactNotificationUrl(url),
             success: true,
             status: response.status,
           });
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : String(error);
-          console.error(`Failed to send notification to ${url}:`, errorMessage);
+          console.error(
+            `Failed to send notification to ${redactNotificationUrl(url)}:`,
+            errorMessage,
+          );
           results.push({
-            url,
+            url: redactNotificationUrl(url),
             success: false,
             error: errorMessage,
           });
@@ -111,14 +142,14 @@ export class AppriseService {
         results,
       };
     } catch (error) {
-      console.error("Apprise notification failed:", error);
+      console.error("Notification dispatch failed:", error);
       throw error;
     }
   }
 
   /**
    * Test notification to a single URL
-   * @param {string} url - Apprise URL to test
+   * @param {string} url - Notification URL to test
    */
   async testUrl(url) {
     try {
@@ -132,7 +163,7 @@ export class AppriseService {
   }
 
   /**
-   * Validate Apprise URL format
+   * Validate notification URL format
    * @param {string} url - URL to validate
    */
   validateUrl(url) {
@@ -145,7 +176,7 @@ export class AppriseService {
       return { valid: false, error: "Invalid URL format" };
     }
 
-    // Check for common Apprise URL patterns
+    // Check for common notification URL patterns
     const apprisePatterns = [
       /^discord:\/\//,
       /^tgram:\/\//,
@@ -162,7 +193,7 @@ export class AppriseService {
     if (!isValidAppriseUrl) {
       return {
         valid: false,
-        error: "URL does not match known Apprise service patterns",
+        error: "URL does not match known notification service patterns",
       };
     }
 

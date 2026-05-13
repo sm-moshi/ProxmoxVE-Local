@@ -630,15 +630,23 @@ export function HelpModal({
 
               <div className="border-border rounded-lg border p-4">
                 <h4 className="text-foreground mb-2 font-medium">
-                  Notifications (Apprise)
+                  Notifications (Gotify / Apprise)
                 </h4>
                 <p className="text-muted-foreground mb-2 text-sm">
-                  Send notifications when sync completes using Apprise, which
-                  supports 80+ notification services. If you want any other
-                  notification service, please open an issue on the GitHub
-                  repository.
+                  Send notifications when sync completes using native Gotify
+                  URLs or Apprise-compatible webhook URLs for other services.
                 </p>
                 <ul className="text-muted-foreground space-y-2 text-sm">
+                  <li>
+                    • <strong>Gotify:</strong>{" "}
+                    <code>gotifys://ntfy.m0sh1.cc/YOUR_APP_TOKEN</code>
+                  </li>
+                  <li>
+                    • <strong>Gotify HTTP:</strong>{" "}
+                    <code>
+                      https://ntfy.m0sh1.cc/message?token=YOUR_APP_TOKEN
+                    </code>
+                  </li>
                   <li>
                     • <strong>Apprise Server:</strong>{" "}
                     <code>http://YOUR_APPRISE_SERVER/notify/apprise</code>
@@ -668,7 +676,7 @@ export function HelpModal({
                   </li>
                   <li>Choose your sync interval (predefined or custom cron)</li>
                   <li>Configure auto-download options if desired</li>
-                  <li>Set up notifications by adding Apprise URLs</li>
+                  <li>Set up notifications by adding Gotify or Apprise URLs</li>
                   <li>
                     Test your notification setup using the &quot;Test
                     Notification&quot; button

@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Validate Apprise URLs if notifications are enabled
+    // Validate notification URLs if notifications are enabled
     if (settings.notificationEnabled && settings.appriseUrls) {
       try {
         // Handle both array and JSON string formats
@@ -119,14 +119,14 @@ export async function POST(request: NextRequest) {
           urls = JSON.parse(settings.appriseUrls);
         } else {
           return NextResponse.json(
-            { error: "Apprise URLs must be an array or JSON string" },
+            { error: "Notification URLs must be an array or JSON string" },
             { status: 400 },
           );
         }
 
         if (!Array.isArray(urls)) {
           return NextResponse.json(
-            { error: "Apprise URLs must be an array" },
+            { error: "Notification URLs must be an array" },
             { status: 400 },
           );
         }
@@ -135,14 +135,14 @@ export async function POST(request: NextRequest) {
         for (const url of urls) {
           if (typeof url !== "string" || url.trim() === "") {
             return NextResponse.json(
-              { error: "All Apprise URLs must be non-empty strings" },
+              { error: "All notification URLs must be non-empty strings" },
               { status: 400 },
             );
           }
         }
       } catch {
         return NextResponse.json(
-          { error: "Invalid JSON format for Apprise URLs" },
+          { error: "Invalid JSON format for notification URLs" },
           { status: 400 },
         );
       }
@@ -344,7 +344,7 @@ async function handleTestNotification() {
 
     if (!appriseUrls?.length) {
       return NextResponse.json(
-        { error: "No Apprise URLs configured" },
+        { error: "No notification URLs configured" },
         { status: 400 },
       );
     }

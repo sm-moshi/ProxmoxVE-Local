@@ -743,7 +743,7 @@ export class AutoSyncService {
     if (!settings.notificationEnabled || !settings.appriseUrls?.length) {
       return {
         success: false,
-        message: "Notifications not enabled or no Apprise URLs configured",
+        message: "Notifications not enabled or no notification URLs configured",
       };
     }
 

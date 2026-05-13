@@ -1593,11 +1593,11 @@ export function GeneralSettingsModal({
                             Enable Notifications
                           </h4>
                           <p className="text-muted-foreground text-sm">
-                            Send notifications when sync completes
+                            Send Gotify notifications when sync completes
                           </p>
                           <p className="text-muted-foreground mt-1 text-xs">
-                            If you want any other notification service, please
-                            open an issue on the GitHub repository.
+                            Gotify is supported directly. Apprise-compatible
+                            webhook URLs are also accepted.
                           </p>
                         </div>
                         <Toggle
@@ -1614,11 +1614,11 @@ export function GeneralSettingsModal({
                               htmlFor="apprise-urls"
                               className="text-foreground mb-1 block text-sm font-medium"
                             >
-                              Apprise URLs
+                              Gotify / Apprise URLs
                             </label>
                             <textarea
                               id="apprise-urls"
-                              placeholder="http://YOUR_APPRISE_SERVER/notify/apprise&#10;"
+                              placeholder="gotifys://ntfy.m0sh1.cc/YOUR_GOTIFY_APP_TOKEN&#10;https://ntfy.m0sh1.cc/message?token=YOUR_GOTIFY_APP_TOKEN"
                               value={appriseUrlsText}
                               onChange={(e) =>
                                 handleAppriseUrlsChange(e.target.value)
@@ -1627,8 +1627,9 @@ export function GeneralSettingsModal({
                               rows={3}
                             />
                             <p className="text-muted-foreground mt-1 text-xs">
-                              One URL per line. Supports Discord, Telegram,
-                              Email, Slack, and more via{" "}
+                              One URL per line. Use Gotify app tokens directly,
+                              or route Discord, Telegram, Email, Slack, and more
+                              through{" "}
                               <a
                                 href="https://github.com/caronc/apprise"
                                 target="_blank"
