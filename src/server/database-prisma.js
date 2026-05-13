@@ -1,7 +1,7 @@
-import { prisma } from './db.js';
-import { join } from 'path';
-import { writeFileSync, unlinkSync, chmodSync, mkdirSync } from 'fs';
-import { existsSync } from 'fs';
+import { prisma } from "./db.js";
+import { join } from "path";
+import { writeFileSync, unlinkSync, chmodSync, mkdirSync } from "fs";
+import { existsSync } from "fs";
 
 class DatabaseServicePrisma {
   constructor() {
@@ -10,7 +10,7 @@ class DatabaseServicePrisma {
 
   init() {
     // Ensure data/ssh-keys directory exists (recursive to create parent dirs)
-    const sshKeysDir = join(process.cwd(), 'data', 'ssh-keys');
+    const sshKeysDir = join(process.cwd(), "data", "ssh-keys");
     if (!existsSync(sshKeysDir)) {
       mkdirSync(sshKeysDir, { recursive: true, mode: 0o700 });
     }
@@ -18,86 +18,114 @@ class DatabaseServicePrisma {
 
   // Server CRUD operations
   async createServer(serverData) {
-    const { name, ip, user, password, auth_type, ssh_key, ssh_key_passphrase, ssh_port, color, key_generated } = serverData;
-    
+    const {
+      name,
+      ip,
+      user,
+      password,
+      auth_type,
+      ssh_key,
+      ssh_key_passphrase,
+      ssh_port,
+      color,
+      key_generated,
+    } = serverData;
+
     let ssh_key_path = null;
-    
+
     // If using SSH key authentication, create persistent key file
-    if (auth_type === 'key' && ssh_key) {
+    if (auth_type === "key" && ssh_key) {
       const serverId = await this.getNextServerId();
       ssh_key_path = this.createSSHKeyFile(serverId, ssh_key);
     }
-    
+
     return await prisma.server.create({
       data: {
         name,
         ip,
         user,
         password,
-        auth_type: auth_type ?? 'password',
+        auth_type: auth_type ?? "password",
         ssh_key,
         ssh_key_passphrase,
         ssh_port: ssh_port ?? 22,
         ssh_key_path,
         key_generated: Boolean(key_generated),
         color,
-      }
+      },
     });
   }
 
   async getAllServers() {
     return await prisma.server.findMany({
-      orderBy: { created_at: 'desc' }
+      orderBy: { created_at: "desc" },
     });
   }
 
   async getServerById(id) {
     return await prisma.server.findUnique({
-      where: { id }
+      where: { id },
     });
   }
 
   async updateServer(id, serverData) {
-    const { name, ip, user, password, auth_type, ssh_key, ssh_key_passphrase, ssh_port, color, key_generated } = serverData;
-    
+    const {
+      name,
+      ip,
+      user,
+      password,
+      auth_type,
+      ssh_key,
+      ssh_key_passphrase,
+      ssh_port,
+      color,
+      key_generated,
+    } = serverData;
+
     // Get existing server to check for key changes
     const existingServer = await this.getServerById(id);
     let ssh_key_path = existingServer?.ssh_key_path;
-    
+
     // Handle SSH key changes
-    if (auth_type === 'key' && ssh_key) {
+    if (auth_type === "key" && ssh_key) {
       // Delete old key file if it exists
-      if (existingServer?.ssh_key_path && existsSync(existingServer.ssh_key_path)) {
+      if (
+        existingServer?.ssh_key_path &&
+        existsSync(existingServer.ssh_key_path)
+      ) {
         try {
           unlinkSync(existingServer.ssh_key_path);
           // Also delete public key file if it exists
-          const pubKeyPath = existingServer.ssh_key_path + '.pub';
+          const pubKeyPath = existingServer.ssh_key_path + ".pub";
           if (existsSync(pubKeyPath)) {
             unlinkSync(pubKeyPath);
           }
         } catch (error) {
-          console.warn('Failed to delete old SSH key file:', error);
+          console.warn("Failed to delete old SSH key file:", error);
         }
       }
-      
+
       // Create new key file
       ssh_key_path = this.createSSHKeyFile(id, ssh_key);
-    } else if (auth_type !== 'key') {
+    } else if (auth_type !== "key") {
       // If switching away from key auth, delete key files
-      if (existingServer?.ssh_key_path && existsSync(existingServer.ssh_key_path)) {
+      if (
+        existingServer?.ssh_key_path &&
+        existsSync(existingServer.ssh_key_path)
+      ) {
         try {
           unlinkSync(existingServer.ssh_key_path);
-          const pubKeyPath = existingServer.ssh_key_path + '.pub';
+          const pubKeyPath = existingServer.ssh_key_path + ".pub";
           if (existsSync(pubKeyPath)) {
             unlinkSync(pubKeyPath);
           }
         } catch (error) {
-          console.warn('Failed to delete SSH key file:', error);
+          console.warn("Failed to delete SSH key file:", error);
         }
       }
       ssh_key_path = null;
     }
-    
+
     return await prisma.server.update({
       where: { id },
       data: {
@@ -105,43 +133,56 @@ class DatabaseServicePrisma {
         ip,
         user,
         password,
-        auth_type: auth_type ?? 'password',
+        auth_type: auth_type ?? "password",
         ssh_key,
         ssh_key_passphrase,
         ssh_port: ssh_port ?? 22,
         ssh_key_path,
-        key_generated: key_generated !== undefined ? Boolean(key_generated) : (existingServer?.key_generated ?? false),
+        key_generated:
+          key_generated !== undefined
+            ? Boolean(key_generated)
+            : (existingServer?.key_generated ?? false),
         color,
-      }
+      },
     });
   }
 
   async deleteServer(id) {
     // Get server info before deletion to clean up key files
     const server = await this.getServerById(id);
-    
+
     // Delete SSH key files if they exist
     if (server?.ssh_key_path && existsSync(server.ssh_key_path)) {
       try {
         unlinkSync(server.ssh_key_path);
-        const pubKeyPath = server.ssh_key_path + '.pub';
+        const pubKeyPath = server.ssh_key_path + ".pub";
         if (existsSync(pubKeyPath)) {
           unlinkSync(pubKeyPath);
         }
       } catch (error) {
-        console.warn('Failed to delete SSH key file:', error);
+        console.warn("Failed to delete SSH key file:", error);
       }
     }
-    
+
     return await prisma.server.delete({
-      where: { id }
+      where: { id },
     });
   }
 
   // Installed Scripts CRUD operations
   async createInstalledScript(scriptData) {
-    const { script_name, script_path, container_id, server_id, execution_mode, status, output_log, web_ui_ip, web_ui_port } = scriptData;
-    
+    const {
+      script_name,
+      script_path,
+      container_id,
+      server_id,
+      execution_mode,
+      status,
+      output_log,
+      web_ui_ip,
+      web_ui_port,
+    } = scriptData;
+
     return await prisma.installedScript.create({
       data: {
         script_name,
@@ -153,16 +194,16 @@ class DatabaseServicePrisma {
         output_log: output_log ?? null,
         web_ui_ip: web_ui_ip ?? null,
         web_ui_port: web_ui_port ?? null,
-      }
+      },
     });
   }
 
   async getAllInstalledScripts() {
     return await prisma.installedScript.findMany({
       include: {
-        server: true
+        server: true,
       },
-      orderBy: { installation_date: 'desc' }
+      orderBy: { installation_date: "desc" },
     });
   }
 
@@ -170,8 +211,8 @@ class DatabaseServicePrisma {
     return await prisma.installedScript.findUnique({
       where: { id },
       include: {
-        server: true
-      }
+        server: true,
+      },
     });
   }
 
@@ -179,15 +220,22 @@ class DatabaseServicePrisma {
     return await prisma.installedScript.findMany({
       where: { server_id },
       include: {
-        server: true
+        server: true,
       },
-      orderBy: { installation_date: 'desc' }
+      orderBy: { installation_date: "desc" },
     });
   }
 
   async updateInstalledScript(id, updateData) {
-    const { script_name, container_id, status, output_log, web_ui_ip, web_ui_port } = updateData;
-    
+    const {
+      script_name,
+      container_id,
+      status,
+      output_log,
+      web_ui_ip,
+      web_ui_port,
+    } = updateData;
+
     const updateFields = {};
     if (script_name !== undefined) updateFields.script_name = script_name;
     if (container_id !== undefined) updateFields.container_id = container_id;
@@ -202,39 +250,39 @@ class DatabaseServicePrisma {
 
     return await prisma.installedScript.update({
       where: { id },
-      data: updateFields
+      data: updateFields,
     });
   }
 
   async deleteInstalledScript(id) {
     return await prisma.installedScript.delete({
-      where: { id }
+      where: { id },
     });
   }
 
   async deleteInstalledScriptsByServer(server_id) {
     return await prisma.installedScript.deleteMany({
-      where: { server_id }
+      where: { server_id },
     });
   }
 
   async getNextServerId() {
     const result = await prisma.server.findFirst({
-      orderBy: { id: 'desc' },
-      select: { id: true }
+      orderBy: { id: "desc" },
+      select: { id: true },
     });
     return (result?.id ?? 0) + 1;
   }
 
   createSSHKeyFile(serverId, sshKey) {
-    const sshKeysDir = join(process.cwd(), 'data', 'ssh-keys');
+    const sshKeysDir = join(process.cwd(), "data", "ssh-keys");
     const keyPath = join(sshKeysDir, `server_${serverId}_key`);
-    
+
     // Normalize the key: trim any trailing whitespace and ensure exactly one newline at the end
-    const normalizedKey = sshKey.trimEnd() + '\n';
+    const normalizedKey = sshKey.trimEnd() + "\n";
     writeFileSync(keyPath, normalizedKey);
     chmodSync(keyPath, 0o600); // Set proper permissions
-    
+
     return keyPath;
   }
 
@@ -243,8 +291,8 @@ class DatabaseServicePrisma {
     return await prisma.lXCConfig.create({
       data: {
         installed_script_id: scriptId,
-        ...configData
-      }
+        ...configData,
+      },
     });
   }
 
@@ -254,20 +302,20 @@ class DatabaseServicePrisma {
       update: configData,
       create: {
         installed_script_id: scriptId,
-        ...configData
-      }
+        ...configData,
+      },
     });
   }
 
   async getLXCConfigByScriptId(scriptId) {
     return await prisma.lXCConfig.findUnique({
-      where: { installed_script_id: scriptId }
+      where: { installed_script_id: scriptId },
     });
   }
 
   async deleteLXCConfig(scriptId) {
     return await prisma.lXCConfig.delete({
-      where: { installed_script_id: scriptId }
+      where: { installed_script_id: scriptId },
     });
   }
 
@@ -320,10 +368,7 @@ class DatabaseServicePrisma {
       include: {
         server: true,
       },
-      orderBy: [
-        { container_id: 'asc' },
-        { created_at: 'desc' },
-      ],
+      orderBy: [{ container_id: "asc" }, { created_at: "desc" }],
     });
   }
 
@@ -342,7 +387,7 @@ class DatabaseServicePrisma {
       include: {
         server: true,
       },
-      orderBy: { created_at: 'desc' },
+      orderBy: { created_at: "desc" },
     });
   }
 
@@ -358,7 +403,7 @@ class DatabaseServicePrisma {
   async getBackupsGroupedByContainer() {
     const backups = await this.getAllBackups();
     const grouped = new Map();
-    
+
     for (const backup of backups) {
       const key = backup.container_id;
       if (!grouped.has(key)) {
@@ -366,7 +411,7 @@ class DatabaseServicePrisma {
       }
       grouped.get(key).push(backup);
     }
-    
+
     return grouped;
   }
 
@@ -411,7 +456,7 @@ class DatabaseServicePrisma {
   async getPBSCredentialsByServer(serverId) {
     return await prisma.pBSStorageCredential.findMany({
       where: { server_id: serverId },
-      orderBy: { storage_name: 'asc' },
+      orderBy: { storage_name: "asc" },
     });
   }
 

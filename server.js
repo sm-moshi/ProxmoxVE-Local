@@ -1,15 +1,15 @@
-import { createServer } from 'http';
-import { parse } from 'url';
-import next from 'next';
-import { WebSocketServer } from 'ws';
-import { spawn } from 'child_process';
-import { existsSync } from 'fs';
-import { join, resolve } from 'path';
-import stripAnsi from 'strip-ansi';
-import { spawn as ptySpawn } from 'node-pty';
-import { getSSHExecutionService } from './src/server/ssh-execution-service.js';
-import { getDatabase } from './src/server/database-prisma.js';
-import dotenv from 'dotenv';
+import { createServer } from "http";
+import { parse } from "url";
+import next from "next";
+import { WebSocketServer } from "ws";
+import { spawn } from "child_process";
+import { existsSync } from "fs";
+import { join, resolve } from "path";
+import stripAnsi from "strip-ansi";
+import { spawn as ptySpawn } from "node-pty";
+import { getSSHExecutionService } from "./src/server/ssh-execution-service.js";
+import { getDatabase } from "./src/server/database-prisma.js";
+import dotenv from "dotenv";
 
 // Dynamic import for auto sync init to avoid tsx caching issues
 /** @type {any} */
@@ -21,18 +21,18 @@ dotenv.config();
 function registerGlobalErrorHandlers() {
   if (registerGlobalErrorHandlers._registered) return;
   registerGlobalErrorHandlers._registered = true;
-  process.on('uncaughtException', (err) => {
-    console.error('uncaught_exception', err);
+  process.on("uncaughtException", (err) => {
+    console.error("uncaught_exception", err);
   });
-  process.on('unhandledRejection', (reason) => {
-    console.error('unhandled_rejection', reason);
+  process.on("unhandledRejection", (reason) => {
+    console.error("unhandled_rejection", reason);
   });
 }
 registerGlobalErrorHandlers._registered = false;
 
-const dev = process.env.NODE_ENV !== 'production';
-const hostname = '0.0.0.0';
-const port = parseInt(process.env.PORT || '3000', 10);
+const dev = process.env.NODE_ENV !== "production";
+const hostname = "::";
+const port = parseInt(process.env.PORT || "3000", 10);
 
 const app = next({ dev, hostname, port });
 // Register global handlers once at bootstrap
@@ -79,6 +79,7 @@ const handle = app.getRequestHandler();
  * @property {boolean} [isShell]
  * @property {boolean} [isBackup]
  * @property {boolean} [isClone]
+ * @property {boolean} [executeInContainer]
  * @property {string} [containerId]
  * @property {string} [storage]
  * @property {string} [backupStorage]
@@ -95,14 +96,14 @@ class ScriptExecutionHandler {
   constructor(server) {
     // Create WebSocketServer without attaching to server
     // We'll handle upgrades manually to avoid interfering with Next.js HMR
-    this.wss = new WebSocketServer({ 
-      noServer: true
+    this.wss = new WebSocketServer({
+      noServer: true,
     });
     this.activeExecutions = new Map();
     this.db = getDatabase();
     this.setupWebSocket();
   }
-  
+
   /**
    * Handle WebSocket upgrade for our endpoint
    * @param {import('http').IncomingMessage} request
@@ -111,7 +112,7 @@ class ScriptExecutionHandler {
    */
   handleUpgrade(request, socket, head) {
     this.wss.handleUpgrade(request, socket, head, (ws) => {
-      this.wss.emit('connection', ws, request);
+      this.wss.emit("connection", ws, request);
     });
   }
 
@@ -122,44 +123,44 @@ class ScriptExecutionHandler {
    */
   parseContainerId(output) {
     // First, strip ANSI color codes to make pattern matching more reliable
-    const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, '');
-    
+    const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, "");
+
     // Look for various patterns that Proxmox scripts might use
     const patterns = [
       // Primary pattern - the exact format from the output
       /🆔\s+Container\s+ID:\s+(\d+)/i,
-      
+
       // Standard patterns with flexible spacing
       /🆔\s*Container\s*ID:\s*(\d+)/i,
       /Container\s*ID:\s*(\d+)/i,
       /CT\s*ID:\s*(\d+)/i,
       /Container\s*(\d+)/i,
-      
+
       // Alternative patterns
       /CT\s*(\d+)/i,
       /Container\s*created\s*with\s*ID\s*(\d+)/i,
       /Created\s*container\s*(\d+)/i,
       /Container\s*(\d+)\s*created/i,
       /ID:\s*(\d+)/i,
-      
+
       // Patterns with different spacing and punctuation
       /Container\s*ID\s*:\s*(\d+)/i,
       /CT\s*ID\s*:\s*(\d+)/i,
       /Container\s*#\s*(\d+)/i,
       /CT\s*#\s*(\d+)/i,
-      
+
       // Patterns that might appear in success messages
       /Successfully\s*created\s*container\s*(\d+)/i,
       /Container\s*(\d+)\s*is\s*ready/i,
       /Container\s*(\d+)\s*started/i,
-      
+
       // Generic number patterns that might be container IDs (3-4 digits)
       /(?:^|\s)(\d{3,4})(?:\s|$)/m,
     ];
 
     // Try patterns on both original and cleaned output
     const outputsToTry = [output, cleanOutput];
-    
+
     for (const testOutput of outputsToTry) {
       for (const pattern of patterns) {
         const match = testOutput.match(pattern);
@@ -172,8 +173,7 @@ class ScriptExecutionHandler {
         }
       }
     }
-    
-    
+
     return null;
   }
 
@@ -184,8 +184,8 @@ class ScriptExecutionHandler {
    */
   parseWebUIUrl(output) {
     // First, strip ANSI color codes to make pattern matching more reliable
-    const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, '');
-    
+    const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, "");
+
     // Look for URL patterns with any valid IP address (private or public)
     const patterns = [
       // HTTP/HTTPS URLs with IP and port
@@ -202,27 +202,28 @@ class ScriptExecutionHandler {
 
     // Try patterns on both original and cleaned output
     const outputsToTry = [output, cleanOutput];
-    
+
     for (const testOutput of outputsToTry) {
       for (const pattern of patterns) {
         const matches = [...testOutput.matchAll(pattern)];
         for (const match of matches) {
           if (match[1]) {
             const ip = match[1];
-            const port = match[2] || (match[0].startsWith('https') ? '443' : '80');
-            
+            const port =
+              match[2] || (match[0].startsWith("https") ? "443" : "80");
+
             // Validate IP address format
             if (ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
               return {
                 ip: ip,
-                port: parseInt(port, 10)
+                port: parseInt(port, 10),
               };
             }
           }
         }
       }
     }
-    
+
     return null;
   }
 
@@ -234,7 +235,12 @@ class ScriptExecutionHandler {
    * @param {number|null} serverId - Server ID for SSH executions
    * @returns {Promise<number|null>} - Installation record ID
    */
-  async createInstallationRecord(scriptName, scriptPath, executionMode, serverId = null) {
+  async createInstallationRecord(
+    scriptName,
+    scriptPath,
+    executionMode,
+    serverId = null,
+  ) {
     try {
       const result = await this.db.createInstalledScript({
         script_name: scriptName,
@@ -242,12 +248,12 @@ class ScriptExecutionHandler {
         container_id: undefined,
         server_id: serverId ?? undefined,
         execution_mode: executionMode,
-        status: 'in_progress',
-        output_log: ''
+        status: "in_progress",
+        output_log: "",
       });
       return Number(result.id);
     } catch (error) {
-      console.error('Error creating installation record:', error);
+      console.error("Error creating installation record:", error);
       return null;
     }
   }
@@ -261,38 +267,38 @@ class ScriptExecutionHandler {
     try {
       await this.db.updateInstalledScript(installationId, updateData);
     } catch (error) {
-      console.error('Error updating installation record:', error);
+      console.error("Error updating installation record:", error);
     }
   }
 
   setupWebSocket() {
-    this.wss.on('connection', (ws, request) => {
-      
+    this.wss.on("connection", (ws, request) => {
       // Set connection metadata
       /** @type {ExtendedWebSocket} */ (ws).connectionTime = Date.now();
-      /** @type {ExtendedWebSocket} */ (ws).clientIP = request.socket.remoteAddress || 'unknown';
-      
-      ws.on('message', (data) => {
+      /** @type {ExtendedWebSocket} */ (ws).clientIP =
+        request.socket.remoteAddress || "unknown";
+
+      ws.on("message", (data) => {
         try {
           const rawMessage = data.toString();
           const message = JSON.parse(rawMessage);
           this.handleMessage(/** @type {ExtendedWebSocket} */ (ws), message);
         } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
+          console.error("Error parsing WebSocket message:", error);
           this.sendMessage(ws, {
-            type: 'error',
-            data: 'Invalid message format',
-            timestamp: Date.now()
+            type: "error",
+            data: "Invalid message format",
+            timestamp: Date.now(),
           });
         }
       });
 
-      ws.on('close', (code, reason) => {
+      ws.on("close", (code, reason) => {
         this.cleanupActiveExecutions(/** @type {ExtendedWebSocket} */ (ws));
       });
 
-      ws.on('error', (error) => {
-        console.error('WebSocket error:', error);
+      ws.on("error", (error) => {
+        console.error("WebSocket error:", error);
         this.cleanupActiveExecutions(/** @type {ExtendedWebSocket} */ (ws));
       });
     });
@@ -305,7 +311,10 @@ class ScriptExecutionHandler {
    */
   async resolveServerForSSH(server) {
     if (!server?.id) return server;
-    if (server.auth_type === 'key' && (!server.ssh_key_path || !existsSync(server.ssh_key_path))) {
+    if (
+      server.auth_type === "key" &&
+      (!server.ssh_key_path || !existsSync(server.ssh_key_path))
+    ) {
       const full = await this.db.getServerById(server.id);
       return /** @type {ServerInfo|null} */ (full ?? server);
     }
@@ -317,43 +326,120 @@ class ScriptExecutionHandler {
    * @param {WebSocketMessage} message
    */
   async handleMessage(ws, message) {
-    const { action, scriptPath, executionId, input, mode, server, isUpdate, isShell, isBackup, isClone, containerId, storage, backupStorage, cloneCount, hostnames, containerType, envVars } = message;
+    const {
+      action,
+      scriptPath,
+      executionId,
+      input,
+      mode,
+      server,
+      isUpdate,
+      isShell,
+      isBackup,
+      isClone,
+      executeInContainer,
+      containerId,
+      storage,
+      backupStorage,
+      cloneCount,
+      hostnames,
+      containerType,
+      envVars,
+    } = message;
 
     switch (action) {
-      case 'start':
+      case "start":
         if (scriptPath && executionId) {
           let serverToUse = server;
           if (serverToUse?.id) {
-            serverToUse = await this.resolveServerForSSH(serverToUse) ?? serverToUse;
+            serverToUse =
+              (await this.resolveServerForSSH(serverToUse)) ?? serverToUse;
           }
           const resolved = serverToUse ?? server;
-          if (isClone && containerId && storage && server && cloneCount && hostnames && containerType) {
-            await this.startSSHCloneExecution(ws, containerId, executionId, storage, /** @type {ServerInfo} */ (resolved), containerType, cloneCount, hostnames);
+          if (
+            isClone &&
+            containerId &&
+            storage &&
+            server &&
+            cloneCount &&
+            hostnames &&
+            containerType
+          ) {
+            await this.startSSHCloneExecution(
+              ws,
+              containerId,
+              executionId,
+              storage,
+              /** @type {ServerInfo} */ (resolved),
+              containerType,
+              cloneCount,
+              hostnames,
+            );
           } else if (isBackup && containerId && storage) {
-            await this.startBackupExecution(ws, containerId, executionId, storage, mode, resolved);
+            await this.startBackupExecution(
+              ws,
+              containerId,
+              executionId,
+              storage,
+              mode,
+              resolved,
+            );
           } else if (isUpdate && containerId) {
-            await this.startUpdateExecution(ws, containerId, executionId, mode, resolved, backupStorage);
+            await this.startUpdateExecution(
+              ws,
+              containerId,
+              executionId,
+              mode,
+              resolved,
+              backupStorage,
+              envVars,
+            );
           } else if (isShell && containerId) {
-            await this.startShellExecution(ws, containerId, executionId, mode, resolved, containerType);
+            await this.startShellExecution(
+              ws,
+              containerId,
+              executionId,
+              mode,
+              resolved,
+              containerType,
+            );
+          } else if (executeInContainer && containerId) {
+            await this.startInContainerScriptExecution(
+              ws,
+              scriptPath,
+              executionId,
+              mode,
+              resolved,
+              envVars,
+              containerId,
+              containerType ?? "lxc",
+            );
           } else {
-            await this.startScriptExecution(ws, scriptPath, executionId, mode, resolved, envVars);
+            await this.startScriptExecution(
+              ws,
+              scriptPath,
+              executionId,
+              mode,
+              resolved,
+              envVars,
+            );
           }
         } else {
           this.sendMessage(ws, {
-            type: 'error',
-            data: 'Missing scriptPath or executionId',
-            timestamp: Date.now()
+            type: "error",
+            data: "Missing scriptPath or executionId",
+            timestamp: Date.now(),
           });
         }
         break;
 
-      case 'stop':
+      case "stop":
         if (executionId) {
           this.stopScriptExecution(executionId);
         }
         break;
 
-      case 'input':
+      case "input":
         if (executionId && input !== undefined) {
           this.sendInputToProcess(executionId, input);
         }
@@ -361,9 +447,9 @@ class ScriptExecutionHandler {
 
       default:
         this.sendMessage(ws, {
-          type: 'error',
-          data: 'Unknown action',
-          timestamp: Date.now()
+          type: "error",
+          data: "Unknown action",
+          timestamp: Date.now(),
         });
     }
   }
@@ -376,57 +462,80 @@ class ScriptExecutionHandler {
    * @param {ServerInfo|null} server
    * @param {Object} [envVars] - Optional environment variables to pass to the script
    */
-  async startScriptExecution(ws, scriptPath, executionId, mode = 'local', server = null, envVars = {}) {
+  async startScriptExecution(
+    ws,
+    scriptPath,
+    executionId,
+    mode = "local",
+    server = null,
+    envVars = {},
+  ) {
     /** @type {number|null} */
     let installationId = null;
-    
+
     try {
-      
       // Check if execution is already running
       if (this.activeExecutions.has(executionId)) {
         this.sendMessage(ws, {
-          type: 'error',
-          data: 'Script execution already running',
-          timestamp: Date.now()
+          type: "error",
+          data: "Script execution already running",
+          timestamp: Date.now(),
         });
         return;
       }
 
       // Extract script name from path
-      const scriptName = scriptPath.split('/').pop() ?? scriptPath.split('\\').pop() ?? 'Unknown Script';
-      
+      const scriptName =
+        scriptPath.split("/").pop() ??
+        scriptPath.split("\\").pop() ??
+        "Unknown Script";
+
       // Create installation record
       const serverId = server ? (server.id ?? null) : null;
-      installationId = await this.createInstallationRecord(scriptName, scriptPath, mode, serverId);
-      
+      installationId = await this.createInstallationRecord(
+        scriptName,
+        scriptPath,
+        mode,
+        serverId,
+      );
+
       if (!installationId) {
-        console.error('Failed to create installation record');
+        console.error("Failed to create installation record");
       }
 
       // Handle SSH execution
-      if (mode === 'ssh' && server) {
-        await this.startSSHScriptExecution(ws, scriptPath, executionId, server, installationId, envVars);
+      if (mode === "ssh" && server) {
+        await this.startSSHScriptExecution(
+          ws,
+          scriptPath,
+          executionId,
+          server,
+          installationId,
+          envVars,
+        );
         return;
       }
-      
-      if (mode === 'ssh' && !server) {
+
+      if (mode === "ssh" && !server) {
         // SSH mode requested but no server provided, falling back to local execution
       }
 
       // Basic validation for local execution
-      const scriptsDir = join(process.cwd(), 'scripts');
+      const scriptsDir = join(process.cwd(), "scripts");
       const resolvedPath = resolve(scriptPath);
-      
+
       if (!resolvedPath.startsWith(resolve(scriptsDir))) {
         this.sendMessage(ws, {
-          type: 'error',
-          data: 'Script path is not within the allowed scripts directory',
-          timestamp: Date.now()
+          type: "error",
+          data: "Script path is not within the allowed scripts directory",
+          timestamp: Date.now(),
         });
-        
+
         // Update installation record with failure
         if (installationId) {
-          await this.updateInstallationRecord(installationId, { status: 'failed' });
+          await this.updateInstallationRecord(installationId, {
+            status: "failed",
+          });
         }
         return;
       }
@@ -435,14 +544,14 @@ class ScriptExecutionHandler {
       // Convert envVars object to environment variables
       const envWithVars = {
         ...process.env,
-        TERM: 'xterm-256color', // Enable proper terminal support
-        FORCE_ANSI: 'true', // Allow ANSI codes for proper display
-        COLUMNS: '80', // Set terminal width
-        LINES: '24' // Set terminal height
+        TERM: "xterm-256color", // Enable proper terminal support
+        FORCE_ANSI: "true", // Allow ANSI codes for proper display
+        COLUMNS: "80", // Set terminal width
+        LINES: "24", // Set terminal height
       };
 
       // Add envVars to environment
-      if (envVars && typeof envVars === 'object') {
+      if (envVars && typeof envVars === "object") {
         for (const [key, value] of Object.entries(envVars)) {
           /** @type {Record<string, string>} */
           const envRecord = envWithVars;
@@ -451,35 +560,35 @@ class ScriptExecutionHandler {
       }
 
       // Start script execution with pty for proper TTY support
-      const childProcess = ptySpawn('bash', [resolvedPath], {
+      const childProcess = ptySpawn("bash", [resolvedPath], {
         cwd: scriptsDir,
-        name: 'xterm-256color',
+        name: "xterm-256color",
         cols: 80,
         rows: 24,
-        env: envWithVars
+        env: envWithVars,
       });
 
       // pty handles encoding automatically
-      
+
       // Store the execution with installation ID
-      this.activeExecutions.set(executionId, { 
-        process: childProcess, 
-        ws, 
+      this.activeExecutions.set(executionId, {
+        process: childProcess,
+        ws,
         installationId,
-        outputBuffer: ''
+        outputBuffer: "",
       });
 
       // Send start message
       this.sendMessage(ws, {
-        type: 'start',
+        type: "start",
         data: `Starting execution of ${scriptPath}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
       // Handle pty data (both stdout and stderr combined)
       childProcess.onData(async (data) => {
         const output = data.toString();
-        
+
         // Store output in buffer for logging
         const execution = this.activeExecutions.get(executionId);
         if (execution) {
@@ -489,29 +598,31 @@ class ScriptExecutionHandler {
             execution.outputBuffer = execution.outputBuffer.slice(-1000);
           }
         }
-        
+
         // Parse for Container ID
         const containerId = this.parseContainerId(output);
         if (containerId && installationId) {
-          await this.updateInstallationRecord(installationId, { container_id: containerId });
+          await this.updateInstallationRecord(installationId, {
+            container_id: containerId,
+          });
         }
-        
+
         // Parse for Web UI URL
         const webUIUrl = this.parseWebUIUrl(output);
         if (webUIUrl && installationId) {
           const { ip, port } = webUIUrl;
           if (ip && port) {
-            await this.updateInstallationRecord(installationId, { 
-              web_ui_ip: ip, 
-              web_ui_port: port 
+            await this.updateInstallationRecord(installationId, {
+              web_ui_ip: ip,
+              web_ui_port: port,
             });
           }
         }
-        
+
         this.sendMessage(ws, {
-          type: 'output',
+          type: "output",
           data: output,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
       });
 
@@ -519,36 +630,291 @@ class ScriptExecutionHandler {
       childProcess.onExit((e) => {
         const execution = this.activeExecutions.get(executionId);
         const isSuccess = e.exitCode === 0;
-        
+
         // Update installation record with final status and output
         if (installationId && execution) {
           this.updateInstallationRecord(installationId, {
-            status: isSuccess ? 'success' : 'failed',
-            output_log: execution.outputBuffer
+            status: isSuccess ? "success" : "failed",
+            output_log: execution.outputBuffer,
           });
         }
-        
+
         this.sendMessage(ws, {
-          type: 'end',
+          type: "end",
           data: `Script execution finished with code: ${e.exitCode}, signal: ${e.signal}`,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
-        
+
         // Clean up
         this.activeExecutions.delete(executionId);
       });
-
     } catch (error) {
       this.sendMessage(ws, {
-        type: 'error',
+        type: "error",
         data: `Failed to start script: ${error instanceof Error ? error.message : String(error)}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
-      
+
       // Update installation record with failure
       if (installationId) {
-        await this.updateInstallationRecord(installationId, { status: 'failed' });
+        await this.updateInstallationRecord(installationId, {
+          status: "failed",
+        });
       }
+    }
+  }
+
+  /**
+   * Execute a script INSIDE a container via `pct exec` (LXC) or `qm guest exec` (VM).
+   * For SSH mode the scripts folder is already transferred to /tmp/scripts on the PVE host by
+   * startSSHScriptExecution; we re-use that mechanism and then run the script inside the CT.
+   * For local mode we pipe the script through `pct exec`.
+   *
+   * @param {ExtendedWebSocket} ws
+   * @param {string} scriptPath
+   * @param {string} executionId
+   * @param {string} mode
+   * @param {ServerInfo|null} server
+   * @param {Object} envVars
+   * @param {string} containerId
+   * @param {'lxc'|'vm'} containerType
+   */
+  async startInContainerScriptExecution(
+    ws,
+    scriptPath,
+    executionId,
+    mode = "local",
+    server = null,
+    envVars = {},
+    containerId,
+    containerType = "lxc",
+  ) {
+    /** @type {number|null} */
+    let installationId = null;
+    try {
+      if (this.activeExecutions.has(executionId)) {
+        this.sendMessage(ws, {
+          type: "error",
+          data: "Script execution already running",
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      const scriptName =
+        scriptPath.split("/").pop() ??
+        scriptPath.split("\\").pop() ??
+        "Unknown Script";
+      const serverId = server ? (server.id ?? null) : null;
+      installationId = await this.createInstallationRecord(
+        scriptName,
+        scriptPath,
+        mode,
+        serverId,
+      );
+
+      // Build env-var export prefix
+      const envExports = Object.entries(envVars ?? {})
+        .map(([k, v]) => `export ${k}=${JSON.stringify(String(v))}`)
+        .join("; ");
+      const envPrefix = envExports ? `${envExports}; ` : "";
+
+      if (mode === "ssh" && server) {
+        // Transfer scripts folder to PVE host, then exec inside container
+        const sshService = getSSHExecutionService();
+        this.sendMessage(ws, {
+          type: "start",
+          data: `Connecting to ${server.ip}…`,
+          timestamp: Date.now(),
+        });
+
+        const relScript = scriptPath.replace(/^scripts[/\\]/, "");
+        const remoteScript = `/tmp/scripts/${relScript}`;
+
+        // Transfer scripts folder silently — suppress verbose rsync file listing
+        this.sendMessage(ws, {
+          type: "output",
+          data: "Syncing scripts…\r\n",
+          timestamp: Date.now(),
+        });
+        await sshService.transferScriptsFolder(
+          server,
+          () => {}, // suppress rsync stdout (verbose file listing)
+          (/** @type {string} */ err) => {
+            // Ignore harmless SSH host-key / known-hosts notices from rsync stderr
+            if (
+              !err.includes("Warning:") &&
+              !err.includes("Permanently added")
+            ) {
+              this.sendMessage(ws, {
+                type: "error",
+                data: err,
+                timestamp: Date.now(),
+              });
+            }
+          },
+        );
+
+        let inContainerCmd;
+
+        if (containerType === "lxc") {
+          // For LXC we must copy the script from host (/tmp/scripts/...) into the container first.
+          // Otherwise pct exec tries to run a host path that does not exist inside the CT.
+          const remoteTarget = `/tmp/${scriptName}`;
+          const pushCmd = `pct push ${containerId} ${remoteScript} ${remoteTarget}`;
+
+          // Run pct push silently (no terminal output needed for this bookkeeping step)
+          await new Promise((resolve, reject) => {
+            sshService.executeCommand(
+              server,
+              pushCmd,
+              () => {}, // suppress push output
+              () => {}, // suppress push stderr
+              (/** @type {number} */ code) => {
+                if (code === 0) resolve(true);
+                else
+                  reject(new Error(`pct push failed with exit code ${code}`));
+              },
+            );
+          });
+
+          inContainerCmd = `pct exec ${containerId} -- bash -c "chmod +x ${remoteTarget}; ${envPrefix}bash ${remoteTarget}"`;
+        } else {
+          // VM execution currently relies on guest exec and assumes script path exists in guest context.
+          inContainerCmd = `qm guest exec ${containerId} -- bash -c "${envPrefix}bash ${remoteScript}"`;
+        }
+
+        this.activeExecutions.set(executionId, {
+          process: null,
+          ws,
+          installationId,
+          outputBuffer: "",
+        });
+
+        // executeCommand resolves immediately with the PTY process — store it so
+        // interactive input (y/n prompts etc.) can be forwarded via sendInputToProcess.
+        const execResult = await sshService.executeCommand(
+          server,
+          inContainerCmd,
+          (/** @type {string} */ data) => {
+            const execution = this.activeExecutions.get(executionId);
+            if (execution) execution.outputBuffer += data;
+            this.sendMessage(ws, {
+              type: "output",
+              data,
+              timestamp: Date.now(),
+            });
+          },
+          (/** @type {string} */ err) => {
+            this.sendMessage(ws, {
+              type: "error",
+              data: err,
+              timestamp: Date.now(),
+            });
+          },
+          async (/** @type {number} */ exitCode) => {
+            const execution = this.activeExecutions.get(executionId);
+            if (installationId && execution) {
+              await this.updateInstallationRecord(installationId, {
+                status: exitCode === 0 ? "success" : "failed",
+                output_log: execution.outputBuffer,
+              });
+            }
+            this.sendMessage(ws, {
+              type: "end",
+              data: `Finished with code: ${exitCode}`,
+              timestamp: Date.now(),
+            });
+            this.activeExecutions.delete(executionId);
+          },
+        );
+
+        // Attach the real PTY process so keyboard input can reach interactive prompts
+        const storedExec = this.activeExecutions.get(executionId);
+        if (
+          storedExec &&
+          execResult &&
+          /** @type {any} */ (execResult).process
+        ) {
+          storedExec.process = /** @type {any} */ (execResult).process;
+        }
+        return;
+      }
+
+      // Local mode: pipe the script content into `pct exec <ctid> -- bash`
+      const scriptsDir = join(process.cwd(), "scripts");
+      const resolvedPath = resolve(scriptPath);
+      if (!resolvedPath.startsWith(resolve(scriptsDir))) {
+        this.sendMessage(ws, {
+          type: "error",
+          data: "Script path outside scripts directory",
+          timestamp: Date.now(),
+        });
+        if (installationId)
+          await this.updateInstallationRecord(installationId, {
+            status: "failed",
+          });
+        return;
+      }
+
+      const bashCmd = `${envPrefix}bash ${resolvedPath}`;
+      const args =
+        containerType === "lxc"
+          ? ["exec", containerId, "--", "bash", "-c", bashCmd]
+          : ["guest", "exec", containerId, "--", "bash", "-c", bashCmd];
+      const cmd = containerType === "lxc" ? "pct" : "qm";
+
+      const childProcess = ptySpawn(cmd, args, {
+        cwd: scriptsDir,
+        name: "xterm-256color",
+        cols: 80,
+        rows: 24,
+        env: { ...process.env, TERM: "xterm-256color" },
+      });
+
+      this.activeExecutions.set(executionId, {
+        process: childProcess,
+        ws,
+        installationId,
+        outputBuffer: "",
+      });
+      this.sendMessage(ws, {
+        type: "start",
+        data: `Executing inside container ${containerId}…`,
+        timestamp: Date.now(),
+      });
+
+      childProcess.onData((data) => {
+        const execution = this.activeExecutions.get(executionId);
+        if (execution) execution.outputBuffer += data;
+        this.sendMessage(ws, { type: "output", data, timestamp: Date.now() });
+      });
+
+      childProcess.onExit(async (e) => {
+        const execution = this.activeExecutions.get(executionId);
+        if (installationId && execution) {
+          await this.updateInstallationRecord(installationId, {
+            status: e.exitCode === 0 ? "success" : "failed",
+            output_log: execution.outputBuffer,
+          });
+        }
+        this.sendMessage(ws, {
+          type: "end",
+          data: `Script finished with code: ${e.exitCode}`,
+          timestamp: Date.now(),
+        });
+        this.activeExecutions.delete(executionId);
+      });
+    } catch (error) {
+      this.sendMessage(ws, {
+        type: "error",
+        data: `Failed to start in-container script: ${error instanceof Error ? error.message : String(error)}`,
+        timestamp: Date.now(),
+      });
+      if (installationId)
+        await this.updateInstallationRecord(installationId, {
+          status: "failed",
+        });
     }
   }
 
@@ -561,117 +927,129 @@ class ScriptExecutionHandler {
    * @param {number|null} installationId
    * @param {Object} [envVars] - Optional environment variables to pass to the script
    */
-  async startSSHScriptExecution(ws, scriptPath, executionId, server, installationId = null, envVars = {}) {
+  async startSSHScriptExecution(
+    ws,
+    scriptPath,
+    executionId,
+    server,
+    installationId = null,
+    envVars = {},
+  ) {
     const sshService = getSSHExecutionService();
 
     // Send start message
     this.sendMessage(ws, {
-      type: 'start',
+      type: "start",
       data: `Starting SSH execution of ${scriptPath} on ${server.name} (${server.ip})`,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     try {
-      const execution = /** @type {ExecutionResult} */ (await sshService.executeScript(
-        server,
-        scriptPath,
-        /** @param {string} data */ async (data) => {
-          // Store output in buffer for logging
-          const exec = this.activeExecutions.get(executionId);
-          if (exec) {
-            exec.outputBuffer += data;
-            // Keep only last 1000 characters to avoid memory issues
-            if (exec.outputBuffer.length > 1000) {
-              exec.outputBuffer = exec.outputBuffer.slice(-1000);
+      const execution = /** @type {ExecutionResult} */ (
+        await sshService.executeScript(
+          server,
+          scriptPath,
+          /** @param {string} data */ async (data) => {
+            // Store output in buffer for logging
+            const exec = this.activeExecutions.get(executionId);
+            if (exec) {
+              exec.outputBuffer += data;
+              // Keep only last 1000 characters to avoid memory issues
+              if (exec.outputBuffer.length > 1000) {
+                exec.outputBuffer = exec.outputBuffer.slice(-1000);
+              }
             }
-          }
-          
-          // Parse for Container ID
-          const containerId = this.parseContainerId(data);
-          if (containerId && installationId) {
-            await this.updateInstallationRecord(installationId, { container_id: containerId });
-          }
-          
-          // Parse for Web UI URL
-          const webUIUrl = this.parseWebUIUrl(data);
-          if (webUIUrl && installationId) {
-            const { ip, port } = webUIUrl;
-            if (ip && port) {
-              await this.updateInstallationRecord(installationId, { 
-                web_ui_ip: ip, 
-                web_ui_port: port 
+
+            // Parse for Container ID
+            const containerId = this.parseContainerId(data);
+            if (containerId && installationId) {
+              await this.updateInstallationRecord(installationId, {
+                container_id: containerId,
               });
             }
-          }
-          
-          // Handle data output
-          this.sendMessage(ws, {
-            type: 'output',
-            data: data,
-            timestamp: Date.now()
-          });
-        },
-        /** @param {string} error */ (error) => {
-          // Store error in buffer for logging
-          const exec = this.activeExecutions.get(executionId);
-          if (exec) {
-            exec.outputBuffer += error;
-            // Keep only last 1000 characters to avoid memory issues
-            if (exec.outputBuffer.length > 1000) {
-              exec.outputBuffer = exec.outputBuffer.slice(-1000);
+
+            // Parse for Web UI URL
+            const webUIUrl = this.parseWebUIUrl(data);
+            if (webUIUrl && installationId) {
+              const { ip, port } = webUIUrl;
+              if (ip && port) {
+                await this.updateInstallationRecord(installationId, {
+                  web_ui_ip: ip,
+                  web_ui_port: port,
+                });
+              }
             }
-          }
-          
-          // Handle errors
-          this.sendMessage(ws, {
-            type: 'error',
-            data: error,
-            timestamp: Date.now()
-          });
-        },
-        /** @param {number} code */ async (code) => {
-          const exec = this.activeExecutions.get(executionId);
-          const isSuccess = code === 0;
-          
-          // Update installation record with final status and output
-          if (installationId && exec) {
-            await this.updateInstallationRecord(installationId, {
-              status: isSuccess ? 'success' : 'failed',
-              output_log: exec.outputBuffer
+
+            // Handle data output
+            this.sendMessage(ws, {
+              type: "output",
+              data: data,
+              timestamp: Date.now(),
             });
-          }
-          
-          // Handle process exit
-          this.sendMessage(ws, {
-            type: 'end',
-            data: `SSH script execution finished with code: ${code}`,
-            timestamp: Date.now()
-          });
-          
-          // Clean up
-          this.activeExecutions.delete(executionId);
-        },
-        envVars
-      ));
+          },
+          /** @param {string} error */ (error) => {
+            // Store error in buffer for logging
+            const exec = this.activeExecutions.get(executionId);
+            if (exec) {
+              exec.outputBuffer += error;
+              // Keep only last 1000 characters to avoid memory issues
+              if (exec.outputBuffer.length > 1000) {
+                exec.outputBuffer = exec.outputBuffer.slice(-1000);
+              }
+            }
+
+            // Handle errors
+            this.sendMessage(ws, {
+              type: "error",
+              data: error,
+              timestamp: Date.now(),
+            });
+          },
+          /** @param {number} code */ async (code) => {
+            const exec = this.activeExecutions.get(executionId);
+            const isSuccess = code === 0;
+
+            // Update installation record with final status and output
+            if (installationId && exec) {
+              await this.updateInstallationRecord(installationId, {
+                status: isSuccess ? "success" : "failed",
+                output_log: exec.outputBuffer,
+              });
+            }
+
+            // Handle process exit
+            this.sendMessage(ws, {
+              type: "end",
+              data: `SSH script execution finished with code: ${code}`,
+              timestamp: Date.now(),
+            });
+
+            // Clean up
+            this.activeExecutions.delete(executionId);
+          },
+          envVars,
+        )
+      );
 
       // Store the execution with installation ID
-      this.activeExecutions.set(executionId, { 
-        process: execution.process, 
-        ws, 
+      this.activeExecutions.set(executionId, {
+        process: execution.process,
+        ws,
         installationId,
-        outputBuffer: ''
+        outputBuffer: "",
       });
-
     } catch (error) {
       this.sendMessage(ws, {
-        type: 'error',
+        type: "error",
         data: `Failed to start SSH execution: ${error instanceof Error ? error.message : String(error)}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
-      
+
       // Update installation record with failure
       if (installationId) {
-        await this.updateInstallationRecord(installationId, { status: 'failed' });
+        await this.updateInstallationRecord(installationId, {
+          status: "failed",
+        });
       }
     }
   }
@@ -682,13 +1060,13 @@ class ScriptExecutionHandler {
   stopScriptExecution(executionId) {
     const execution = this.activeExecutions.get(executionId);
     if (execution) {
-      execution.process.kill('SIGTERM');
+      execution.process.kill("SIGTERM");
       this.activeExecutions.delete(executionId);
-      
+
       this.sendMessage(execution.ws, {
-        type: 'end',
-        data: 'Script execution stopped by user',
-        timestamp: Date.now()
+        type: "end",
+        data: "Script execution stopped by user",
+        timestamp: Date.now(),
       });
     }
   }
@@ -709,7 +1087,8 @@ class ScriptExecutionHandler {
    * @param {any} message
    */
   sendMessage(ws, message) {
-    if (ws.readyState === 1) { // WebSocket.OPEN
+    if (ws.readyState === 1) {
+      // WebSocket.OPEN
       ws.send(JSON.stringify(message));
     }
   }
@@ -720,7 +1099,7 @@ class ScriptExecutionHandler {
   cleanupActiveExecutions(ws) {
     for (const [executionId, execution] of this.activeExecutions.entries()) {
       if (execution.ws === ws) {
-        execution.process.kill('SIGTERM');
+        execution.process.kill("SIGTERM");
         this.activeExecutions.delete(executionId);
       }
     }
@@ -735,29 +1114,42 @@ class ScriptExecutionHandler {
    * @param {string} mode
    * @param {ServerInfo|null} server
    */
-  async startBackupExecution(ws, containerId, executionId, storage, mode = 'local', server = null) {
+  async startBackupExecution(
+    ws,
+    containerId,
+    executionId,
+    storage,
+    mode = "local",
+    server = null,
+  ) {
     try {
       // Send start message
       this.sendMessage(ws, {
-        type: 'start',
+        type: "start",
         data: `Starting backup for container ${containerId} to storage ${storage}...`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
-      if (mode === 'ssh' && server) {
-        await this.startSSHBackupExecution(ws, containerId, executionId, storage, server);
+      if (mode === "ssh" && server) {
+        await this.startSSHBackupExecution(
+          ws,
+          containerId,
+          executionId,
+          storage,
+          server,
+        );
       } else {
         this.sendMessage(ws, {
-          type: 'error',
-          data: 'Backup is only supported via SSH',
-          timestamp: Date.now()
+          type: "error",
+          data: "Backup is only supported via SSH",
+          timestamp: Date.now(),
         });
       }
     } catch (error) {
       this.sendMessage(ws, {
-        type: 'error',
+        type: "error",
         data: `Failed to start backup: ${error instanceof Error ? error.message : String(error)}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     }
   }
@@ -771,105 +1163,117 @@ class ScriptExecutionHandler {
    * @param {ServerInfo} server
    * @param {Function} [onComplete] - Optional callback when backup completes
    */
-  startSSHBackupExecution(ws, containerId, executionId, storage, server, onComplete = undefined) {
+  startSSHBackupExecution(
+    ws,
+    containerId,
+    executionId,
+    storage,
+    server,
+    onComplete = undefined,
+  ) {
     const sshService = getSSHExecutionService();
-    
+
     return new Promise((resolve, reject) => {
       try {
         const backupCommand = `vzdump ${containerId} --storage ${storage} --mode snapshot`;
-        
+
         // Wrap the onExit callback to resolve our promise
         let promiseResolved = false;
-        
-        sshService.executeCommand(
-          server,
-          backupCommand,
-          /** @param {string} data */
-          (data) => {
-            this.sendMessage(ws, {
-              type: 'output',
-              data: data,
-              timestamp: Date.now()
-            });
-          },
-          /** @param {string} error */
-          (error) => {
-            this.sendMessage(ws, {
-              type: 'error',
-              data: error,
-              timestamp: Date.now()
-            });
-          },
-          /** @param {number} code */
-          (code) => {
-            // Don't send 'end' message here if this is part of a backup+update flow
-            // The update flow will handle completion messages
-            const success = code === 0;
-            
-            if (!success) {
+
+        sshService
+          .executeCommand(
+            server,
+            backupCommand,
+            /** @param {string} data */
+            (data) => {
               this.sendMessage(ws, {
-                type: 'error',
-                data: `Backup failed with exit code: ${code}`,
-                timestamp: Date.now()
+                type: "output",
+                data: data,
+                timestamp: Date.now(),
               });
-            }
-            
-            // Send a completion message (but not 'end' type to avoid stopping terminal)
-            this.sendMessage(ws, {
-              type: 'output',
-              data: `\n[Backup ${success ? 'completed' : 'failed'} with exit code: ${code}]\n`,
-              timestamp: Date.now()
+            },
+            /** @param {string} error */
+            (error) => {
+              this.sendMessage(ws, {
+                type: "error",
+                data: error,
+                timestamp: Date.now(),
+              });
+            },
+            /** @param {number} code */
+            (code) => {
+              // Don't send 'end' message here if this is part of a backup+update flow
+              // The update flow will handle completion messages
+              const success = code === 0;
+
+              if (!success) {
+                this.sendMessage(ws, {
+                  type: "error",
+                  data: `Backup failed with exit code: ${code}`,
+                  timestamp: Date.now(),
+                });
+              }
+
+              // Send a completion message (but not 'end' type to avoid stopping terminal)
+              this.sendMessage(ws, {
+                type: "output",
+                data: `\n[Backup ${success ? "completed" : "failed"} with exit code: ${code}]\n`,
+                timestamp: Date.now(),
+              });
+
+              if (onComplete) onComplete(success);
+
+              // Resolve the promise when backup completes
+              // Use setImmediate to ensure resolution happens in the right execution context
+              if (!promiseResolved) {
+                promiseResolved = true;
+                const result = { success, code };
+
+                // Use setImmediate to ensure promise resolution happens in the next tick
+                // This ensures the await in startUpdateExecution can properly resume
+                setImmediate(() => {
+                  try {
+                    resolve(result);
+                  } catch (resolveError) {
+                    console.error(
+                      "Error resolving backup promise:",
+                      resolveError,
+                    );
+                    reject(resolveError);
+                  }
+                });
+              }
+
+              this.activeExecutions.delete(executionId);
+            },
+          )
+          .then((execution) => {
+            // Store the execution
+            this.activeExecutions.set(executionId, {
+              process: /** @type {any} */ (execution).process,
+              ws,
             });
-            
-            if (onComplete) onComplete(success);
-            
-            // Resolve the promise when backup completes
-            // Use setImmediate to ensure resolution happens in the right execution context
+            // Note: Don't resolve here - wait for onExit callback
+          })
+          .catch((error) => {
+            console.error("Error starting backup execution:", error);
+            this.sendMessage(ws, {
+              type: "error",
+              data: `SSH backup execution failed: ${error instanceof Error ? error.message : String(error)}`,
+              timestamp: Date.now(),
+            });
+            if (onComplete) onComplete(false);
             if (!promiseResolved) {
               promiseResolved = true;
-              const result = { success, code };
-              
-              // Use setImmediate to ensure promise resolution happens in the next tick
-              // This ensures the await in startUpdateExecution can properly resume
-              setImmediate(() => {
-                try {
-                  resolve(result);
-                } catch (resolveError) {
-                  console.error('Error resolving backup promise:', resolveError);
-                  reject(resolveError);
-                }
-              });
+              reject(error);
             }
-            
-            this.activeExecutions.delete(executionId);
-          }
-        ).then((execution) => {
-          // Store the execution
-          this.activeExecutions.set(executionId, { 
-            process: /** @type {any} */ (execution).process, 
-            ws
           });
-          // Note: Don't resolve here - wait for onExit callback
-        }).catch((error) => {
-          console.error('Error starting backup execution:', error);
-          this.sendMessage(ws, {
-            type: 'error',
-            data: `SSH backup execution failed: ${error instanceof Error ? error.message : String(error)}`,
-            timestamp: Date.now()
-          });
-          if (onComplete) onComplete(false);
-          if (!promiseResolved) {
-            promiseResolved = true;
-            reject(error);
-          }
-        });
-
       } catch (error) {
-        console.error('Error in startSSHBackupExecution:', error);
+        console.error("Error in startSSHBackupExecution:", error);
         this.sendMessage(ws, {
-          type: 'error',
+          type: "error",
           data: `SSH backup execution failed: ${error instanceof Error ? error.message : String(error)}`,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
         if (onComplete) onComplete(false);
         reject(error);
@@ -889,65 +1293,81 @@ class ScriptExecutionHandler {
    * @param {number} cloneCount
    * @param {string[]} hostnames
    */
-  async startSSHCloneExecution(ws, containerId, executionId, storage, server, containerType, cloneCount, hostnames) {
+  async startSSHCloneExecution(
+    ws,
+    containerId,
+    executionId,
+    storage,
+    server,
+    containerType,
+    cloneCount,
+    hostnames,
+  ) {
     const sshService = getSSHExecutionService();
-    
+
     this.sendMessage(ws, {
-      type: 'start',
+      type: "start",
       data: `Starting clone operation: Creating ${cloneCount} clone(s) of ${containerType.toUpperCase()} ${containerId}...`,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     try {
       // Step 1: Stop source container/VM
       this.sendMessage(ws, {
-        type: 'output',
+        type: "output",
         data: `\n[Step 1/${4 + cloneCount}] Stopping source ${containerType.toUpperCase()} ${containerId}...\n`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
-      const stopCommand = containerType === 'lxc' ? `pct stop ${containerId}` : `qm stop ${containerId}`;
-      await new Promise(/** @type {(resolve: (value?: void) => void, reject: (error?: any) => void) => void} */ ((resolve, reject) => {
-        sshService.executeCommand(
-          server,
-          stopCommand,
-          /** @param {string} data */
-          (data) => {
-            this.sendMessage(ws, {
-              type: 'output',
-              data: data,
-              timestamp: Date.now()
-            });
-          },
-          /** @param {string} error */
-          (error) => {
-            this.sendMessage(ws, {
-              type: 'error',
-              data: error,
-              timestamp: Date.now()
-            });
-          },
-          /** @param {number} code */
-          (code) => {
-            if (code === 0) {
-              this.sendMessage(ws, {
-                type: 'output',
-                data: `\n[Step 1/${4 + cloneCount}] Source ${containerType.toUpperCase()} stopped successfully.\n`,
-                timestamp: Date.now()
-              });
-              resolve();
-            } else {
-              // Continue even if stop fails (might already be stopped)
-              this.sendMessage(ws, {
-                type: 'output',
-                data: `\n[Step 1/${4 + cloneCount}] Stop command completed with exit code ${code} (container may already be stopped).\n`,
-                timestamp: Date.now()
-              });
-              resolve();
-            }
+      const stopCommand =
+        containerType === "lxc"
+          ? `pct stop ${containerId}`
+          : `qm stop ${containerId}`;
+      await new Promise(
+        /** @type {(resolve: (value?: void) => void, reject: (error?: any) => void) => void} */ (
+          (resolve, reject) => {
+            sshService.executeCommand(
+              server,
+              stopCommand,
+              /** @param {string} data */
+              (data) => {
+                this.sendMessage(ws, {
+                  type: "output",
+                  data: data,
+                  timestamp: Date.now(),
+                });
+              },
+              /** @param {string} error */
+              (error) => {
+                this.sendMessage(ws, {
+                  type: "error",
+                  data: error,
+                  timestamp: Date.now(),
+                });
+              },
+              /** @param {number} code */
+              (code) => {
+                if (code === 0) {
+                  this.sendMessage(ws, {
+                    type: "output",
+                    data: `\n[Step 1/${4 + cloneCount}] Source ${containerType.toUpperCase()} stopped successfully.\n`,
+                    timestamp: Date.now(),
+                  });
+                  resolve();
+                } else {
+                  // Continue even if stop fails (might already be stopped)
+                  this.sendMessage(ws, {
+                    type: "output",
+                    data: `\n[Step 1/${4 + cloneCount}] Stop command completed with exit code ${code} (container may already be stopped).\n`,
+                    timestamp: Date.now(),
+                  });
+                  resolve();
+                }
+              },
+            );
           }
-        );
-      }));
+        ),
+      );
 
       // Step 2: Clone for each clone count (get next ID sequentially before each clone)
       const clonedIds = [];
@@ -957,52 +1377,60 @@ class ScriptExecutionHandler {
 
         // Get next ID for this clone
         this.sendMessage(ws, {
-          type: 'output',
+          type: "output",
           data: `\n[Step ${2 + i}/${4 + cloneCount}] Getting next available ID for clone ${cloneNumber}...\n`,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
 
-        let nextId = '';
+        let nextId = "";
         try {
-          let output = '';
-          await new Promise(/** @type {(resolve: (value?: void) => void, reject: (error?: any) => void) => void} */ ((resolve, reject) => {
-            sshService.executeCommand(
-              server,
-              'pvesh get /cluster/nextid',
-              /** @param {string} data */
-              (data) => {
-                output += data;
-              },
-              /** @param {string} error */
-              (error) => {
-                reject(new Error(`Failed to get next ID: ${error}`));
-              },
-              /** @param {number} exitCode */
-              (exitCode) => {
-                if (exitCode === 0) {
-                  resolve();
-                } else {
-                  reject(new Error(`pvesh command failed with exit code ${exitCode}`));
-                }
+          let output = "";
+          await new Promise(
+            /** @type {(resolve: (value?: void) => void, reject: (error?: any) => void) => void} */ (
+              (resolve, reject) => {
+                sshService.executeCommand(
+                  server,
+                  "pvesh get /cluster/nextid",
+                  /** @param {string} data */
+                  (data) => {
+                    output += data;
+                  },
+                  /** @param {string} error */
+                  (error) => {
+                    reject(new Error(`Failed to get next ID: ${error}`));
+                  },
+                  /** @param {number} exitCode */
+                  (exitCode) => {
+                    if (exitCode === 0) {
+                      resolve();
+                    } else {
+                      reject(
+                        new Error(
+                          `pvesh command failed with exit code ${exitCode}`,
+                        ),
+                      );
+                    }
+                  },
+                );
               }
-            );
-          }));
+            ),
+          );
 
           nextId = output.trim();
           if (!nextId || !/^\d+$/.test(nextId)) {
-            throw new Error('Invalid next ID received');
+            throw new Error("Invalid next ID received");
           }
 
           this.sendMessage(ws, {
-            type: 'output',
+            type: "output",
             data: `\n[Step ${2 + i}/${4 + cloneCount}] Got next ID: ${nextId}\n`,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
         } catch (error) {
           this.sendMessage(ws, {
-            type: 'error',
+            type: "error",
             data: `\n[Step ${2 + i}/${4 + cloneCount}] Failed to get next ID: ${error instanceof Error ? error.message : String(error)}\n`,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
           throw error;
         }
@@ -1011,200 +1439,231 @@ class ScriptExecutionHandler {
 
         // Clone the container/VM
         this.sendMessage(ws, {
-          type: 'output',
+          type: "output",
           data: `\n[Step ${2 + i}/${4 + cloneCount}] Cloning ${containerType.toUpperCase()} ${containerId} to ${nextId} with hostname ${hostname}...\n`,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
 
-        const cloneCommand = containerType === 'lxc'
-          ? `pct clone ${containerId} ${nextId} --hostname ${hostname} --storage ${storage}`
-          : `qm clone ${containerId} ${nextId} --name ${hostname} --storage ${storage}`;
+        const cloneCommand =
+          containerType === "lxc"
+            ? `pct clone ${containerId} ${nextId} --hostname ${hostname} --storage ${storage}`
+            : `qm clone ${containerId} ${nextId} --name ${hostname} --storage ${storage}`;
 
-        await new Promise(/** @type {(resolve: (value?: void) => void, reject: (error?: any) => void) => void} */ ((resolve, reject) => {
-          sshService.executeCommand(
-            server,
-            cloneCommand,
-            /** @param {string} data */
-            (data) => {
-              this.sendMessage(ws, {
-                type: 'output',
-                data: data,
-                timestamp: Date.now()
-              });
-            },
-            /** @param {string} error */
-            (error) => {
-              this.sendMessage(ws, {
-                type: 'error',
-                data: error,
-                timestamp: Date.now()
-              });
-            },
-            /** @param {number} code */
-            (code) => {
-              if (code === 0) {
-                this.sendMessage(ws, {
-                  type: 'output',
-                  data: `\n[Step ${2 + i}/${4 + cloneCount}] Clone ${cloneNumber} created successfully.\n`,
-                  timestamp: Date.now()
-                });
-                resolve();
-              } else {
-                this.sendMessage(ws, {
-                  type: 'error',
-                  data: `\nClone ${cloneNumber} failed with exit code: ${code}\n`,
-                  timestamp: Date.now()
-                });
-                reject(new Error(`Clone ${cloneNumber} failed with exit code ${code}`));
-              }
+        await new Promise(
+          /** @type {(resolve: (value?: void) => void, reject: (error?: any) => void) => void} */ (
+            (resolve, reject) => {
+              sshService.executeCommand(
+                server,
+                cloneCommand,
+                /** @param {string} data */
+                (data) => {
+                  this.sendMessage(ws, {
+                    type: "output",
+                    data: data,
+                    timestamp: Date.now(),
+                  });
+                },
+                /** @param {string} error */
+                (error) => {
+                  this.sendMessage(ws, {
+                    type: "error",
+                    data: error,
+                    timestamp: Date.now(),
+                  });
+                },
+                /** @param {number} code */
+                (code) => {
+                  if (code === 0) {
+                    this.sendMessage(ws, {
+                      type: "output",
+                      data: `\n[Step ${2 + i}/${4 + cloneCount}] Clone ${cloneNumber} created successfully.\n`,
+                      timestamp: Date.now(),
+                    });
+                    resolve();
+                  } else {
+                    this.sendMessage(ws, {
+                      type: "error",
+                      data: `\nClone ${cloneNumber} failed with exit code: ${code}\n`,
+                      timestamp: Date.now(),
+                    });
+                    reject(
+                      new Error(
+                        `Clone ${cloneNumber} failed with exit code ${code}`,
+                      ),
+                    );
+                  }
+                },
+              );
             }
-          );
-        }));
+          ),
+        );
       }
 
       // Step 3: Start source container/VM
       this.sendMessage(ws, {
-        type: 'output',
+        type: "output",
         data: `\n[Step ${2 + cloneCount + 1}/${4 + cloneCount}] Starting source ${containerType.toUpperCase()} ${containerId}...\n`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
-      const startSourceCommand = containerType === 'lxc' ? `pct start ${containerId}` : `qm start ${containerId}`;
-      await new Promise(/** @type {(resolve: (value?: void) => void, reject: (error?: any) => void) => void} */ ((resolve) => {
-        sshService.executeCommand(
-          server,
-          startSourceCommand,
-          /** @param {string} data */
-          (data) => {
-            this.sendMessage(ws, {
-              type: 'output',
-              data: data,
-              timestamp: Date.now()
-            });
-          },
-          /** @param {string} error */
-          (error) => {
-            this.sendMessage(ws, {
-              type: 'error',
-              data: error,
-              timestamp: Date.now()
-            });
-          },
-          /** @param {number} code */
-          (code) => {
-            if (code === 0) {
-              this.sendMessage(ws, {
-                type: 'output',
-                data: `\n[Step ${2 + cloneCount + 1}/${4 + cloneCount}] Source ${containerType.toUpperCase()} started successfully.\n`,
-                timestamp: Date.now()
-              });
-            } else {
-              this.sendMessage(ws, {
-                type: 'output',
-                data: `\n[Step ${2 + cloneCount + 1}/${4 + cloneCount}] Start command completed with exit code ${code}.\n`,
-                timestamp: Date.now()
-              });
-            }
-            resolve();
+      const startSourceCommand =
+        containerType === "lxc"
+          ? `pct start ${containerId}`
+          : `qm start ${containerId}`;
+      await new Promise(
+        /** @type {(resolve: (value?: void) => void, reject: (error?: any) => void) => void} */ (
+          (resolve) => {
+            sshService.executeCommand(
+              server,
+              startSourceCommand,
+              /** @param {string} data */
+              (data) => {
+                this.sendMessage(ws, {
+                  type: "output",
+                  data: data,
+                  timestamp: Date.now(),
+                });
+              },
+              /** @param {string} error */
+              (error) => {
+                this.sendMessage(ws, {
+                  type: "error",
+                  data: error,
+                  timestamp: Date.now(),
+                });
+              },
+              /** @param {number} code */
+              (code) => {
+                if (code === 0) {
+                  this.sendMessage(ws, {
+                    type: "output",
+                    data: `\n[Step ${2 + cloneCount + 1}/${4 + cloneCount}] Source ${containerType.toUpperCase()} started successfully.\n`,
+                    timestamp: Date.now(),
+                  });
+                } else {
+                  this.sendMessage(ws, {
+                    type: "output",
+                    data: `\n[Step ${2 + cloneCount + 1}/${4 + cloneCount}] Start command completed with exit code ${code}.\n`,
+                    timestamp: Date.now(),
+                  });
+                }
+                resolve();
+              },
+            );
           }
-        );
-      }));
+        ),
+      );
 
       // Step 4: Start target containers/VMs
       this.sendMessage(ws, {
-        type: 'output',
+        type: "output",
         data: `\n[Step ${2 + cloneCount + 2}/${4 + cloneCount}] Starting cloned ${containerType.toUpperCase()}(s)...\n`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
       for (let i = 0; i < cloneCount; i++) {
         const cloneNumber = i + 1;
         const nextId = clonedIds[i];
 
-        const startTargetCommand = containerType === 'lxc' ? `pct start ${nextId}` : `qm start ${nextId}`;
-        await new Promise(/** @type {(resolve: (value?: void) => void, reject: (error?: any) => void) => void} */ ((resolve) => {
-          sshService.executeCommand(
-            server,
-            startTargetCommand,
-            /** @param {string} data */
-            (data) => {
-              this.sendMessage(ws, {
-                type: 'output',
-                data: data,
-                timestamp: Date.now()
-              });
-            },
-            /** @param {string} error */
-            (error) => {
-              this.sendMessage(ws, {
-                type: 'error',
-                data: error,
-                timestamp: Date.now()
-              });
-            },
-            /** @param {number} code */
-            (code) => {
-              if (code === 0) {
-                this.sendMessage(ws, {
-                  type: 'output',
-                  data: `\nClone ${cloneNumber} (ID: ${nextId}) started successfully.\n`,
-                  timestamp: Date.now()
-                });
-              } else {
-                this.sendMessage(ws, {
-                  type: 'output',
-                  data: `\nClone ${cloneNumber} (ID: ${nextId}) start completed with exit code ${code}.\n`,
-                  timestamp: Date.now()
-                });
-              }
-              resolve();
+        const startTargetCommand =
+          containerType === "lxc"
+            ? `pct start ${nextId}`
+            : `qm start ${nextId}`;
+        await new Promise(
+          /** @type {(resolve: (value?: void) => void, reject: (error?: any) => void) => void} */ (
+            (resolve) => {
+              sshService.executeCommand(
+                server,
+                startTargetCommand,
+                /** @param {string} data */
+                (data) => {
+                  this.sendMessage(ws, {
+                    type: "output",
+                    data: data,
+                    timestamp: Date.now(),
+                  });
+                },
+                /** @param {string} error */
+                (error) => {
+                  this.sendMessage(ws, {
+                    type: "error",
+                    data: error,
+                    timestamp: Date.now(),
+                  });
+                },
+                /** @param {number} code */
+                (code) => {
+                  if (code === 0) {
+                    this.sendMessage(ws, {
+                      type: "output",
+                      data: `\nClone ${cloneNumber} (ID: ${nextId}) started successfully.\n`,
+                      timestamp: Date.now(),
+                    });
+                  } else {
+                    this.sendMessage(ws, {
+                      type: "output",
+                      data: `\nClone ${cloneNumber} (ID: ${nextId}) start completed with exit code ${code}.\n`,
+                      timestamp: Date.now(),
+                    });
+                  }
+                  resolve();
+                },
+              );
             }
-          );
-        }));
+          ),
+        );
       }
 
       // Step 5: Add to database
       this.sendMessage(ws, {
-        type: 'output',
+        type: "output",
         data: `\n[Step ${2 + cloneCount + 3}/${4 + cloneCount}] Adding cloned ${containerType.toUpperCase()}(s) to database...\n`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
       for (let i = 0; i < cloneCount; i++) {
         const nextId = clonedIds[i];
         const hostname = hostnames[i];
-        
+
         try {
           // Read config file to get hostname/name (node-specific path)
           const nodeName = server.name;
-          const configPath = containerType === 'lxc' 
-            ? `/etc/pve/nodes/${nodeName}/lxc/${nextId}.conf`
-            : `/etc/pve/nodes/${nodeName}/qemu-server/${nextId}.conf`;
-          
-          let configContent = '';
-          await new Promise(/** @type {(resolve: (value?: void) => void) => void} */ ((resolve) => {
-            sshService.executeCommand(
-              server,
-              `cat "${configPath}" 2>/dev/null || echo ""`,
-              /** @param {string} data */
-              (data) => {
-                configContent += data;
-              },
-              () => resolve(),
-              () => resolve()
-            );
-          }));
+          const configPath =
+            containerType === "lxc"
+              ? `/etc/pve/nodes/${nodeName}/lxc/${nextId}.conf`
+              : `/etc/pve/nodes/${nodeName}/qemu-server/${nextId}.conf`;
+
+          let configContent = "";
+          await new Promise(
+            /** @type {(resolve: (value?: void) => void) => void} */ (
+              (resolve) => {
+                sshService.executeCommand(
+                  server,
+                  `cat "${configPath}" 2>/dev/null || echo ""`,
+                  /** @param {string} data */
+                  (data) => {
+                    configContent += data;
+                  },
+                  () => resolve(),
+                  () => resolve(),
+                );
+              }
+            ),
+          );
 
           // Parse config for hostname/name
           let finalHostname = hostname;
           if (configContent.trim()) {
-            const lines = configContent.split('\n');
+            const lines = configContent.split("\n");
             for (const line of lines) {
               const trimmed = line.trim();
-              if (containerType === 'lxc' && trimmed.startsWith('hostname:')) {
+              if (containerType === "lxc" && trimmed.startsWith("hostname:")) {
                 finalHostname = trimmed.substring(9).trim();
                 break;
-              } else if (containerType === 'vm' && trimmed.startsWith('name:')) {
+              } else if (
+                containerType === "vm" &&
+                trimmed.startsWith("name:")
+              ) {
                 finalHostname = trimmed.substring(5).trim();
                 break;
               }
@@ -1221,34 +1680,39 @@ class ScriptExecutionHandler {
             script_path: `cloned/${finalHostname}`,
             container_id: nextId,
             server_id: server.id,
-            execution_mode: 'ssh',
-            status: 'success',
-            output_log: `Cloned ${containerType.toUpperCase()}`
+            execution_mode: "ssh",
+            status: "success",
+            output_log: `Cloned ${containerType.toUpperCase()}`,
           });
 
           // For LXC, store config in database
-          if (containerType === 'lxc' && configContent.trim()) {
+          if (containerType === "lxc" && configContent.trim()) {
             // Simple config parser
             /** @type {any} */
             const configData = {};
-            const lines = configContent.split('\n');
+            const lines = configContent.split("\n");
             for (const line of lines) {
               const trimmed = line.trim();
-              if (!trimmed || trimmed.startsWith('#')) continue;
-              
-              const [key, ...valueParts] = trimmed.split(':');
-              const value = valueParts.join(':').trim();
-              
-              if (key === 'hostname') configData.hostname = value;
-              else if (key === 'arch') configData.arch = value;
-              else if (key === 'cores') configData.cores = parseInt(value) || null;
-              else if (key === 'memory') configData.memory = parseInt(value) || null;
-              else if (key === 'swap') configData.swap = parseInt(value) || null;
-              else if (key === 'onboot') configData.onboot = parseInt(value) || null;
-              else if (key === 'ostype') configData.ostype = value;
-              else if (key === 'unprivileged') configData.unprivileged = parseInt(value) || null;
-              else if (key === 'tags') configData.tags = value;
-              else if (key === 'rootfs') {
+              if (!trimmed || trimmed.startsWith("#")) continue;
+
+              const [key, ...valueParts] = trimmed.split(":");
+              const value = valueParts.join(":").trim();
+
+              if (key === "hostname") configData.hostname = value;
+              else if (key === "arch") configData.arch = value;
+              else if (key === "cores")
+                configData.cores = parseInt(value) || null;
+              else if (key === "memory")
+                configData.memory = parseInt(value) || null;
+              else if (key === "swap")
+                configData.swap = parseInt(value) || null;
+              else if (key === "onboot")
+                configData.onboot = parseInt(value) || null;
+              else if (key === "ostype") configData.ostype = value;
+              else if (key === "unprivileged")
+                configData.unprivileged = parseInt(value) || null;
+              else if (key === "tags") configData.tags = value;
+              else if (key === "rootfs") {
                 const match = value.match(/^([^:]+):([^,]+)/);
                 if (match) {
                   configData.rootfs_storage = match[1];
@@ -1259,36 +1723,36 @@ class ScriptExecutionHandler {
                 }
               }
             }
-            
+
             await this.db.createLXCConfig(script.id, configData);
           }
 
           this.sendMessage(ws, {
-            type: 'output',
+            type: "output",
             data: `\nClone ${i + 1} (ID: ${nextId}, Hostname: ${finalHostname}) added to database successfully.\n`,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
         } catch (error) {
           this.sendMessage(ws, {
-            type: 'error',
+            type: "error",
             data: `\nError adding clone ${i + 1} (ID: ${nextId}) to database: ${error instanceof Error ? error.message : String(error)}\n`,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
         }
       }
 
       this.sendMessage(ws, {
-        type: 'output',
+        type: "output",
         data: `\n\n[Clone operation completed successfully!]\nCreated ${cloneCount} clone(s) of ${containerType.toUpperCase()} ${containerId}.\n`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
       this.activeExecutions.delete(executionId);
     } catch (error) {
       this.sendMessage(ws, {
-        type: 'error',
+        type: "error",
         data: `\n\n[Clone operation failed!]\nError: ${error instanceof Error ? error.message : String(error)}\n`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
       this.activeExecutions.delete(executionId);
     }
@@ -1303,77 +1767,95 @@ class ScriptExecutionHandler {
    * @param {ServerInfo|undefined} server
    * @param {string} [backupStorage] - Optional storage to backup to before update
    */
-  async startUpdateExecution(ws, containerId, executionId, mode = 'local', server = undefined, backupStorage = undefined) {
+  async startUpdateExecution(
+    ws,
+    containerId,
+    executionId,
+    mode = "local",
+    server = undefined,
+    backupStorage = undefined,
+    envVars = {},
+  ) {
     try {
       // If backup storage is provided, run backup first
-      if (backupStorage && mode === 'ssh' && server) {
+      if (backupStorage && mode === "ssh" && server) {
         this.sendMessage(ws, {
-          type: 'start',
+          type: "start",
           data: `Starting backup before update for container ${containerId}...`,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
 
         // Create a separate execution ID for backup
         const backupExecutionId = `backup_${executionId}`;
-        
+
         // Run backup and wait for it to complete
         try {
           const backupResult = await this.startSSHBackupExecution(
-            ws, 
-            containerId, 
-            backupExecutionId, 
-            backupStorage, 
-            server
+            ws,
+            containerId,
+            backupExecutionId,
+            backupStorage,
+            server,
           );
-          
+
           // Backup completed (successfully or not)
           if (!backupResult || !backupResult.success) {
             // Backup failed, but we'll still allow update (per requirement 1b)
             this.sendMessage(ws, {
-              type: 'output',
-              data: '\n⚠️ Backup failed, but proceeding with update as requested...\n',
-              timestamp: Date.now()
+              type: "output",
+              data: "\n⚠️ Backup failed, but proceeding with update as requested...\n",
+              timestamp: Date.now(),
             });
           } else {
             // Backup succeeded
             this.sendMessage(ws, {
-              type: 'output',
-              data: '\n✅ Backup completed successfully. Starting update...\n',
-              timestamp: Date.now()
+              type: "output",
+              data: "\n✅ Backup completed successfully. Starting update...\n",
+              timestamp: Date.now(),
             });
           }
         } catch (error) {
-          console.error('Backup error before update:', error);
+          console.error("Backup error before update:", error);
           // Backup failed to start, but allow update to proceed
           this.sendMessage(ws, {
-            type: 'output',
+            type: "output",
             data: `\n⚠️ Backup error: ${error instanceof Error ? error.message : String(error)}. Proceeding with update...\n`,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
         }
-        
+
         // Small delay before starting update
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
-      
+
       // Send start message for update (only if we're actually starting an update)
       this.sendMessage(ws, {
-        type: 'start',
+        type: "start",
         data: `Starting update for container ${containerId}...`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
-      if (mode === 'ssh' && server) {
-        await this.startSSHUpdateExecution(ws, containerId, executionId, server);
+      if (mode === "ssh" && server) {
+        await this.startSSHUpdateExecution(
+          ws,
+          containerId,
+          executionId,
+          server,
+          envVars,
+        );
       } else {
-        await this.startLocalUpdateExecution(ws, containerId, executionId);
+        await this.startLocalUpdateExecution(
+          ws,
+          containerId,
+          executionId,
+          envVars,
+        );
       }
-
     } catch (error) {
       this.sendMessage(ws, {
-        type: 'error',
+        type: "error",
         data: `Failed to start update: ${error instanceof Error ? error.message : String(error)}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     }
   }
@@ -1384,46 +1866,61 @@ class ScriptExecutionHandler {
    * @param {string} containerId
    * @param {string} executionId
    */
-  async startLocalUpdateExecution(ws, containerId, executionId) {
-    const { spawn } = await import('node-pty');
-    
+  async startLocalUpdateExecution(ws, containerId, executionId, envVars = {}) {
+    const { spawn } = await import("node-pty");
+
     // Create a shell process that will run pct enter and then update
-    const childProcess = spawn('bash', ['-c', `pct enter ${containerId}`], {
-      name: 'xterm-color',
+    const childProcess = spawn("bash", ["-c", `pct enter ${containerId}`], {
+      name: "xterm-color",
       cols: 80,
       rows: 24,
       cwd: process.cwd(),
-      env: process.env
+      env: process.env,
     });
 
     // Store the execution
-    this.activeExecutions.set(executionId, { 
-      process: childProcess, 
-      ws
+    this.activeExecutions.set(executionId, {
+      process: childProcess,
+      ws,
     });
 
     // Handle pty data
     childProcess.onData((data) => {
       this.sendMessage(ws, {
-        type: 'output',
+        type: "output",
         data: data.toString(),
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     });
 
+    // Build env export commands (e.g. for PHS_SILENT=1)
+    const envExports = Object.entries(envVars)
+      .filter(([key]) => key.startsWith("PHS_") || key.startsWith("var_"))
+      .map(([key, value]) => {
+        const safeValue = String(value)
+          .replace(/\\/g, "\\\\")
+          .replace(/"/g, '\\"');
+        return `export ${key}="${safeValue}"`;
+      })
+      .join("; ");
+
     // Send the update command after a delay to ensure we're in the container
     setTimeout(() => {
-      childProcess.write('update\n');
+      if (envExports) {
+        childProcess.write(`${envExports}; update\n`);
+      } else {
+        childProcess.write("update\n");
+      }
     }, 4000);
 
     // Handle process exit
     childProcess.onExit((e) => {
       this.sendMessage(ws, {
-        type: 'end',
+        type: "end",
         data: `Update completed with exit code: ${e.exitCode}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
-      
+
       this.activeExecutions.delete(executionId);
     });
   }
@@ -1435,9 +1932,15 @@ class ScriptExecutionHandler {
    * @param {string} executionId
    * @param {ServerInfo} server
    */
-  async startSSHUpdateExecution(ws, containerId, executionId, server) {
+  async startSSHUpdateExecution(
+    ws,
+    containerId,
+    executionId,
+    server,
+    envVars = {},
+  ) {
     const sshService = getSSHExecutionService();
-    
+
     try {
       const execution = await sshService.executeCommand(
         server,
@@ -1445,47 +1948,63 @@ class ScriptExecutionHandler {
         /** @param {string} data */
         (data) => {
           this.sendMessage(ws, {
-            type: 'output',
+            type: "output",
             data: data,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
         },
         /** @param {string} error */
         (error) => {
           this.sendMessage(ws, {
-            type: 'error',
+            type: "error",
             data: error,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
         },
         /** @param {number} code */
         (code) => {
           this.sendMessage(ws, {
-            type: 'end',
+            type: "end",
             data: `Update completed with exit code: ${code}`,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
-          
+
           this.activeExecutions.delete(executionId);
-        }
+        },
       );
 
       // Store the execution
-      this.activeExecutions.set(executionId, { 
-        process: /** @type {any} */ (execution).process, 
-        ws
+      this.activeExecutions.set(executionId, {
+        process: /** @type {any} */ (execution).process,
+        ws,
       });
+
+      // Build env export commands (e.g. for PHS_SILENT=1)
+      const envExports = Object.entries(envVars)
+        .filter(([key]) => key.startsWith("PHS_") || key.startsWith("var_"))
+        .map(([key, value]) => {
+          const safeValue = String(value)
+            .replace(/\\/g, "\\\\")
+            .replace(/"/g, '\\"');
+          return `export ${key}="${safeValue}"`;
+        })
+        .join("; ");
 
       // Send the update command after a delay to ensure we're in the container
       setTimeout(() => {
-        /** @type {any} */ (execution).process.write('update\n');
+        if (envExports) {
+          /** @type {any} */ (execution).process.write(
+            `${envExports}; update\n`,
+          );
+        } else {
+          /** @type {any} */ (execution).process.write("update\n");
+        }
       }, 4000);
-
     } catch (error) {
       this.sendMessage(ws, {
-        type: 'error',
+        type: "error",
         data: `SSH execution failed: ${error instanceof Error ? error.message : String(error)}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     }
   }
@@ -1499,26 +2018,43 @@ class ScriptExecutionHandler {
    * @param {ServerInfo|null} server
    * @param {'lxc'|'vm'} [containerType='lxc']
    */
-  async startShellExecution(ws, containerId, executionId, mode = 'local', server = null, containerType = 'lxc') {
+  async startShellExecution(
+    ws,
+    containerId,
+    executionId,
+    mode = "local",
+    server = null,
+    containerType = "lxc",
+  ) {
     try {
-      const typeLabel = containerType === 'vm' ? 'VM' : 'container';
+      const typeLabel = containerType === "vm" ? "VM" : "container";
       this.sendMessage(ws, {
-        type: 'start',
+        type: "start",
         data: `Starting shell session for ${typeLabel} ${containerId}...`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
-      if (mode === 'ssh' && server) {
-        await this.startSSHShellExecution(ws, containerId, executionId, server, containerType);
+      if (mode === "ssh" && server) {
+        await this.startSSHShellExecution(
+          ws,
+          containerId,
+          executionId,
+          server,
+          containerType,
+        );
       } else {
-        await this.startLocalShellExecution(ws, containerId, executionId, containerType);
+        await this.startLocalShellExecution(
+          ws,
+          containerId,
+          executionId,
+          containerType,
+        );
       }
-
     } catch (error) {
       this.sendMessage(ws, {
-        type: 'error',
+        type: "error",
         data: `Failed to start shell: ${error instanceof Error ? error.message : String(error)}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     }
   }
@@ -1530,29 +2066,37 @@ class ScriptExecutionHandler {
    * @param {string} executionId
    * @param {'lxc'|'vm'} [containerType='lxc']
    */
-  async startLocalShellExecution(ws, containerId, executionId, containerType = 'lxc') {
-    const { spawn } = await import('node-pty');
-    const shellCommand = containerType === 'vm' ? `qm terminal ${containerId}` : `pct enter ${containerId}`;
-    const childProcess = spawn('bash', ['-c', shellCommand], {
-      name: 'xterm-color',
+  async startLocalShellExecution(
+    ws,
+    containerId,
+    executionId,
+    containerType = "lxc",
+  ) {
+    const { spawn } = await import("node-pty");
+    const shellCommand =
+      containerType === "vm"
+        ? `qm terminal ${containerId}`
+        : `pct enter ${containerId}`;
+    const childProcess = spawn("bash", ["-c", shellCommand], {
+      name: "xterm-color",
       cols: 80,
       rows: 24,
       cwd: process.cwd(),
-      env: process.env
+      env: process.env,
     });
 
     // Store the execution
-    this.activeExecutions.set(executionId, { 
-      process: childProcess, 
-      ws
+    this.activeExecutions.set(executionId, {
+      process: childProcess,
+      ws,
     });
 
     // Handle pty data
     childProcess.onData((data) => {
       this.sendMessage(ws, {
-        type: 'output',
+        type: "output",
         data: data.toString(),
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     });
 
@@ -1561,11 +2105,11 @@ class ScriptExecutionHandler {
     // Handle process exit
     childProcess.onExit((e) => {
       this.sendMessage(ws, {
-        type: 'end',
+        type: "end",
         data: `Shell session ended with exit code: ${e.exitCode}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
-      
+
       this.activeExecutions.delete(executionId);
     });
   }
@@ -1578,9 +2122,18 @@ class ScriptExecutionHandler {
    * @param {ServerInfo} server
    * @param {'lxc'|'vm'} [containerType='lxc']
    */
-  async startSSHShellExecution(ws, containerId, executionId, server, containerType = 'lxc') {
+  async startSSHShellExecution(
+    ws,
+    containerId,
+    executionId,
+    server,
+    containerType = "lxc",
+  ) {
     const sshService = getSSHExecutionService();
-    const shellCommand = containerType === 'vm' ? `qm terminal ${containerId}` : `pct enter ${containerId}`;
+    const shellCommand =
+      containerType === "vm"
+        ? `qm terminal ${containerId}`
+        : `pct enter ${containerId}`;
     try {
       const execution = await sshService.executeCommand(
         server,
@@ -1588,44 +2141,43 @@ class ScriptExecutionHandler {
         /** @param {string} data */
         (data) => {
           this.sendMessage(ws, {
-            type: 'output',
+            type: "output",
             data: data,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
         },
         /** @param {string} error */
         (error) => {
           this.sendMessage(ws, {
-            type: 'error',
+            type: "error",
             data: error,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
         },
         /** @param {number} code */
         (code) => {
           this.sendMessage(ws, {
-            type: 'end',
+            type: "end",
             data: `Shell session ended with exit code: ${code}`,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           });
-          
+
           this.activeExecutions.delete(executionId);
-        }
+        },
       );
 
       // Store the execution
-      this.activeExecutions.set(executionId, { 
-        process: /** @type {any} */ (execution).process, 
-        ws
+      this.activeExecutions.set(executionId, {
+        process: /** @type {any} */ (execution).process,
+        ws,
       });
 
       // Note: No automatic command is sent - user can type commands interactively
-
     } catch (error) {
       this.sendMessage(ws, {
-        type: 'error',
+        type: "error",
         data: `SSH shell execution failed: ${error instanceof Error ? error.message : String(error)}`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     }
   }
@@ -1633,116 +2185,130 @@ class ScriptExecutionHandler {
 
 // TerminalHandler removed - not used by current application
 
-app.prepare().then(() => {
-  console.log('> Next.js app prepared successfully');
-  const httpServer = createServer(async (req, res) => {
-    try {
-      // Be sure to pass `true` as the second argument to `url.parse`.
-      // This tells it to parse the query portion of the URL.
-      const parsedUrl = parse(req.url || '', true);
-      const { pathname, query } = parsedUrl;
+app
+  .prepare()
+  .then(() => {
+    console.log("> Next.js app prepared successfully");
+    const httpServer = createServer(async (req, res) => {
+      try {
+        // Be sure to pass `true` as the second argument to `url.parse`.
+        // This tells it to parse the query portion of the URL.
+        const parsedUrl = parse(req.url || "", true);
+        const { pathname, query } = parsedUrl;
 
-      // Check if this is a WebSocket upgrade request
-      const isWebSocketUpgrade = req.headers.upgrade === 'websocket';
-      
-      // Only intercept WebSocket upgrades for /ws/script-execution
-      // Let Next.js handle all other WebSocket upgrades (like HMR) and all HTTP requests
-      if (isWebSocketUpgrade && pathname === '/ws/script-execution') {
-        // WebSocket upgrade will be handled by the WebSocket server
-        // Don't call handle() for this path - let WebSocketServer handle it
-        return;
-      }
+        // Check if this is a WebSocket upgrade request
+        const isWebSocketUpgrade = req.headers.upgrade === "websocket";
 
-      // Let Next.js handle all other requests including:
-      // - HTTP requests to /ws/script-execution (non-WebSocket)
-      // - WebSocket upgrades to other paths (like /_next/webpack-hmr)
-      // - All static assets (_next routes)
-      // - All other routes
-      await handle(req, res, parsedUrl);
-    } catch (err) {
-      console.error('Error occurred handling', req.url, err);
-      res.statusCode = 500;
-      res.end('internal server error');
-    }
-  });
-
-  // Create WebSocket handlers
-  const scriptHandler = new ScriptExecutionHandler(httpServer);
-  
-  // Handle WebSocket upgrades manually to avoid interfering with Next.js HMR
-  // We need to preserve Next.js's upgrade handlers and call them for non-matching paths
-  // Save any existing upgrade listeners (Next.js might have set them up)
-  const existingUpgradeListeners = httpServer.listeners('upgrade').slice();
-  httpServer.removeAllListeners('upgrade');
-  
-  // Add our upgrade handler that routes based on path
-  httpServer.on('upgrade', (request, socket, head) => {
-    const parsedUrl = parse(request.url || '', true);
-    const { pathname } = parsedUrl;
-    
-    if (pathname === '/ws/script-execution') {
-      // Handle our custom WebSocket endpoint
-      scriptHandler.handleUpgrade(request, socket, head);
-    } else {
-      // For all other paths (including Next.js HMR), call existing listeners
-      // This allows Next.js to handle its own WebSocket upgrades
-      for (const listener of existingUpgradeListeners) {
-        try {
-          listener.call(httpServer, request, socket, head);
-        } catch (err) {
-          console.error('Error in upgrade listener:', err);
+        // Only intercept WebSocket upgrades for /ws/script-execution
+        // Let Next.js handle all other WebSocket upgrades (like HMR) and all HTTP requests
+        if (isWebSocketUpgrade && pathname === "/ws/script-execution") {
+          // WebSocket upgrade will be handled by the WebSocket server
+          // Don't call handle() for this path - let WebSocketServer handle it
+          return;
         }
-      }
-    }
-  });
-  // Note: TerminalHandler removed as it's not being used by the current application
 
-  httpServer
-    .once('error', (err) => {
-      console.error(err);
-      process.exit(1);
-    })
-    .listen(port, hostname, async () => {
-      console.log(`> Ready on http://${hostname}:${port}`);
-      console.log(`> WebSocket server running on ws://${hostname}:${port}/ws/script-execution`);
-      
-      // Initialize auto sync module and run initialization
-      if (!autoSyncModule) {
-        try {
-          console.log('Dynamically importing autoSyncInit...');
-          autoSyncModule = await import('./src/server/lib/autoSyncInit.js');
-          console.log('autoSyncModule loaded, exports:', Object.keys(autoSyncModule));
-        } catch (error) {
-          const err = error instanceof Error ? error : new Error(String(error));
-          console.error('Failed to import autoSyncInit:', err.message);
-          console.error('Stack:', err.stack);
-          throw error;
-        }
-      }
-      
-      // Initialize default repositories
-      if (typeof autoSyncModule.initializeRepositories === 'function') {
-        console.log('Calling initializeRepositories...');
-        await autoSyncModule.initializeRepositories();
-      } else {
-        console.warn('initializeRepositories is not a function, type:', typeof autoSyncModule.initializeRepositories);
-      }
-      
-      // Initialize auto-sync service
-      if (typeof autoSyncModule.initializeAutoSync === 'function') {
-        console.log('Calling initializeAutoSync...');
-        autoSyncModule.initializeAutoSync();
-      }
-      
-      // Setup graceful shutdown handlers
-      if (typeof autoSyncModule.setupGracefulShutdown === 'function') {
-        console.log('Setting up graceful shutdown...');
-        autoSyncModule.setupGracefulShutdown();
+        // Let Next.js handle all other requests including:
+        // - HTTP requests to /ws/script-execution (non-WebSocket)
+        // - WebSocket upgrades to other paths (like /_next/webpack-hmr)
+        // - All static assets (_next routes)
+        // - All other routes
+        await handle(req, res, parsedUrl);
+      } catch (err) {
+        console.error("Error occurred handling", req.url, err);
+        res.statusCode = 500;
+        res.end("internal server error");
       }
     });
-}).catch((err) => {
-  console.error('> Failed to start server:', err.message);
-  console.error('> If you see "Could not find a production build", run: npm run build');
-  console.error('> Full error:', err);
-  process.exit(1);
-});
+
+    // Create WebSocket handlers
+    const scriptHandler = new ScriptExecutionHandler(httpServer);
+
+    // Handle WebSocket upgrades manually to avoid interfering with Next.js HMR
+    // We need to preserve Next.js's upgrade handlers and call them for non-matching paths
+    // Save any existing upgrade listeners (Next.js might have set them up)
+    const existingUpgradeListeners = httpServer.listeners("upgrade").slice();
+    httpServer.removeAllListeners("upgrade");
+
+    // Add our upgrade handler that routes based on path
+    httpServer.on("upgrade", (request, socket, head) => {
+      const parsedUrl = parse(request.url || "", true);
+      const { pathname } = parsedUrl;
+
+      if (pathname === "/ws/script-execution") {
+        // Handle our custom WebSocket endpoint
+        scriptHandler.handleUpgrade(request, socket, head);
+      } else {
+        // For all other paths (including Next.js HMR), call existing listeners
+        // This allows Next.js to handle its own WebSocket upgrades
+        for (const listener of existingUpgradeListeners) {
+          try {
+            listener.call(httpServer, request, socket, head);
+          } catch (err) {
+            console.error("Error in upgrade listener:", err);
+          }
+        }
+      }
+    });
+    // Note: TerminalHandler removed as it's not being used by the current application
+
+    httpServer
+      .once("error", (err) => {
+        console.error(err);
+        process.exit(1);
+      })
+      .listen(port, hostname, async () => {
+        console.log(`> Ready on http://${hostname}:${port}`);
+        console.log(
+          `> WebSocket server running on ws://${hostname}:${port}/ws/script-execution`,
+        );
+
+        // Initialize auto sync module and run initialization
+        if (!autoSyncModule) {
+          try {
+            console.log("Dynamically importing autoSyncInit...");
+            autoSyncModule = await import("./src/server/lib/autoSyncInit.js");
+            console.log(
+              "autoSyncModule loaded, exports:",
+              Object.keys(autoSyncModule),
+            );
+          } catch (error) {
+            const err =
+              error instanceof Error ? error : new Error(String(error));
+            console.error("Failed to import autoSyncInit:", err.message);
+            console.error("Stack:", err.stack);
+            throw error;
+          }
+        }
+
+        // Initialize default repositories
+        if (typeof autoSyncModule.initializeRepositories === "function") {
+          console.log("Calling initializeRepositories...");
+          await autoSyncModule.initializeRepositories();
+        } else {
+          console.warn(
+            "initializeRepositories is not a function, type:",
+            typeof autoSyncModule.initializeRepositories,
+          );
+        }
+
+        // Initialize auto-sync service
+        if (typeof autoSyncModule.initializeAutoSync === "function") {
+          console.log("Calling initializeAutoSync...");
+          autoSyncModule.initializeAutoSync();
+        }
+
+        // Setup graceful shutdown handlers
+        if (typeof autoSyncModule.setupGracefulShutdown === "function") {
+          console.log("Setting up graceful shutdown...");
+          autoSyncModule.setupGracefulShutdown();
+        }
+      });
+  })
+  .catch((err) => {
+    console.error("> Failed to start server:", err.message);
+    console.error(
+      '> If you see "Could not find a production build", run: npm run build',
+    );
+    console.error("> Full error:", err);
+    process.exit(1);
+  });

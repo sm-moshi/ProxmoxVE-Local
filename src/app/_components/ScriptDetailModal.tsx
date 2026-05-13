@@ -1,78 +1,175 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useMemo, useTransition } from "react";
 import Image from "next/image";
 import { api } from "~/trpc/react";
 import type { Script } from "~/types/script";
 import type { Server } from "~/types/server";
 import { DiffViewer } from "./DiffViewer";
 import { TextViewer } from "./TextViewer";
-import { ExecutionModeModal } from "./ExecutionModeModal";
 import { ConfirmationModal } from "./ConfirmationModal";
-import { ScriptVersionModal } from "./ScriptVersionModal";
 import {
   TypeBadge,
   UpdateableBadge,
   PrivilegedBadge,
   NoteBadge,
+  DevBadge,
 } from "./Badge";
 import { Button } from "./ui/button";
-import { useRegisterModal } from "./modal/ModalStackProvider";
-
-function deriveScriptPath(scriptType: string, methodType: string, slug: string): string {
-  const type = (scriptType || "ct").toLowerCase().trim();
-  const method = (methodType || "default").toLowerCase().trim();
-  if (method === "alpine" && (type === "ct" || type === "lxc")) return `ct/alpine-${slug}.sh`;
-  switch (type) {
-    case "ct":
-    case "lxc": return `ct/${slug}.sh`;
-    case "pve": return `tools/pve/${slug}.sh`;
-    case "addon": return `tools/addon/${slug}.sh`;
-    case "vm": return `vm/${slug}.sh`;
-    case "turnkey": return `turnkey/${slug}.sh`;
-    default: return `ct/${slug}.sh`;
-  }
-}
+import { useRegisterModal, ModalPortal } from "./modal/ModalStackProvider";
+import { InstallCommandBlock } from "./InstallCommandBlock";
+import type { InstallDefaults } from "./InstallCommandBlock";
+import { useShell } from "./ShellContext";
+import {
+  Check,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  RefreshCw,
+  Trash2,
+  Eye,
+  ExternalLink,
+  Server as ServerIcon,
+  Terminal,
+  Loader2,
+} from "lucide-react";
 
 interface ScriptDetailModalProps {
   script: Script | null;
   isOpen: boolean;
   onClose: () => void;
-  onInstallScript?: (
-    scriptPath: string,
-    scriptName: string,
-    mode?: "local" | "ssh",
-    server?: Server,
-    envVars?: Record<string, string | number | boolean>,
-  ) => void;
+  orderedSlugs?: string[];
+  onSelectSlug?: (slug: string) => void;
 }
+
+type InstalledContainerShell = {
+  id: number;
+  script_name: string;
+  container_id: string;
+  status: string;
+  is_vm?: boolean | null;
+  server_id?: number | null;
+  server_name?: string | null;
+  server_ip?: string | null;
+  server_user?: string | null;
+  server_password?: string | null;
+  server_auth_type?: Server["auth_type"] | null;
+  server_ssh_key?: string | null;
+  server_ssh_key_passphrase?: string | null;
+  server_ssh_port?: number | null;
+};
 
 export function ScriptDetailModal({
   script,
   isOpen,
   onClose,
-  onInstallScript,
+  orderedSlugs,
+  onSelectSlug,
 }: ScriptDetailModalProps) {
-  useRegisterModal(isOpen, {
+  const zIndex = useRegisterModal(isOpen, {
     id: "script-detail-modal",
     allowEscape: true,
     onClose,
   });
+  const { open: openShell } = useShell();
+  const { data: installedScriptsData } =
+    api.installedScripts.getAllInstalledScripts.useQuery(undefined, {
+      enabled: isOpen,
+    });
   const [imageError, setImageError] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loadMessage, setLoadMessage] = useState<string | null>(null);
   const [diffViewerOpen, setDiffViewerOpen] = useState(false);
   const [selectedDiffFile, setSelectedDiffFile] = useState<string | null>(null);
   const [textViewerOpen, setTextViewerOpen] = useState(false);
-  const [executionModeOpen, setExecutionModeOpen] = useState(false);
-  const [versionModalOpen, setVersionModalOpen] = useState(false);
-  const [selectedVersionType, setSelectedVersionType] = useState<string | null>(
-    null,
-  );
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [terminalActive, setTerminalActive] = useState(false);
 
-  // Check if script files exist locally
+  const [, startNavTransition] = useTransition();
+
+  useEffect(() => {
+    setImageError(false);
+    setLoadMessage(null);
+    setTerminalActive(false);
+  }, [script?.slug]);
+
+  const activeIndex = useMemo(() => {
+    if (!script || !orderedSlugs) return -1;
+    return orderedSlugs.indexOf(script.slug);
+  }, [script, orderedSlugs]);
+
+  const previousSlug =
+    orderedSlugs && activeIndex > 0 ? orderedSlugs[activeIndex - 1] : null;
+  const nextSlug =
+    orderedSlugs && activeIndex >= 0 && activeIndex < orderedSlugs.length - 1
+      ? orderedSlugs[activeIndex + 1]
+      : null;
+
+  useEffect(() => {
+    if (!isOpen || !onSelectSlug) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      )
+        return;
+      if (e.key === "ArrowLeft" && previousSlug) {
+        e.preventDefault();
+        startNavTransition(() => onSelectSlug(previousSlug));
+      }
+      if (e.key === "ArrowRight" && nextSlug) {
+        e.preventDefault();
+        startNavTransition(() => onSelectSlug(nextSlug));
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onSelectSlug, previousSlug, nextSlug]);
+
+  const normalizeScriptId = (s?: string): string =>
+    (s ?? "")
+      .toLowerCase()
+      .replace(/\.(sh|bash|py|js|ts)$/i, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+  const matchingContainers = useMemo(() => {
+    if (!script || !installedScriptsData?.success) return [];
+    const slug = normalizeScriptId(script.slug);
+    const name = normalizeScriptId(script.name);
+    const scripts = (installedScriptsData.scripts ??
+      []) as InstalledContainerShell[];
+    return scripts.filter((s) => {
+      if (!s.container_id || s.status === "failed") return false;
+      const sn = normalizeScriptId(s.script_name);
+      return sn === slug || sn === name;
+    });
+  }, [script, installedScriptsData]);
+
+  const hasAlpine = useMemo(() => {
+    if (!script) return false;
+    return script.install_methods?.some((m) => m.type === "alpine") ?? false;
+  }, [script]);
+
+  const installDefaults = useMemo((): InstallDefaults | undefined => {
+    if (!script) return undefined;
+    const defaultMethod =
+      script.install_methods?.find((m) => m.type === "default") ??
+      script.install_methods?.[0];
+    if (!defaultMethod?.resources) return undefined;
+    const { cpu, ram, hdd } = defaultMethod.resources;
+    if (cpu === 0 && ram === 0 && hdd === 0) return undefined;
+    return {
+      cpu: cpu !== 0 ? cpu : 1,
+      ram: ram !== 0 ? ram : 512,
+      hdd: hdd !== 0 ? hdd : 2,
+    };
+  }, [script]);
+
   const {
     data: scriptFilesData,
     refetch: refetchScriptFiles,
@@ -82,36 +179,29 @@ export function ScriptDetailModal({
     { enabled: !!script && isOpen },
   );
 
-  // Compare local and remote script content (run in parallel, not dependent on scriptFilesData)
   const {
     data: comparisonData,
     refetch: refetchComparison,
     isLoading: comparisonLoading,
   } = api.scripts.compareScriptContent.useQuery(
     { slug: script?.slug ?? "" },
-    {
-      enabled: !!script && isOpen,
-      refetchOnMount: true,
-      staleTime: 0,
-    },
+    { enabled: !!script && isOpen, refetchOnMount: true, staleTime: 0 },
   );
 
-  // Load script mutation
   const loadScriptMutation = api.scripts.loadScript.useMutation({
     onSuccess: (data) => {
       setIsLoading(false);
       if (data.success) {
-        const message =
-          "message" in data ? data.message : "Script loaded successfully";
-        setLoadMessage(`[SUCCESS] ${message}`);
-        // Refetch script files status and comparison data to update the UI
+        setLoadMessage(
+          `[SUCCESS] ${"message" in data ? data.message : "Script loaded successfully"}`,
+        );
         void refetchScriptFiles();
         void refetchComparison();
       } else {
-        const error = "error" in data ? data.error : "Failed to load script";
-        setLoadMessage(`[ERROR] ${error}`);
+        setLoadMessage(
+          `[ERROR] ${"error" in data ? data.error : "Failed to load script"}`,
+        );
       }
-      // Clear message after 5 seconds
       setTimeout(() => setLoadMessage(null), 5000);
     },
     onError: (error) => {
@@ -121,22 +211,20 @@ export function ScriptDetailModal({
     },
   });
 
-  // Delete script mutation
   const deleteScriptMutation = api.scripts.deleteScript.useMutation({
     onSuccess: (data) => {
       setIsDeleting(false);
       if (data.success) {
-        const message =
-          "message" in data ? data.message : "Script deleted successfully";
-        setLoadMessage(`[SUCCESS] ${message}`);
-        // Refetch script files status and comparison data to update the UI
+        setLoadMessage(
+          `[SUCCESS] ${"message" in data ? data.message : "Script deleted successfully"}`,
+        );
         void refetchScriptFiles();
         void refetchComparison();
       } else {
-        const error = "error" in data ? data.error : "Failed to delete script";
-        setLoadMessage(`[ERROR] ${error}`);
+        setLoadMessage(
+          `[ERROR] ${"error" in data ? data.error : "Failed to delete script"}`,
+        );
       }
-      // Clear message after 5 seconds
       setTimeout(() => setLoadMessage(null), 5000);
     },
     onError: (error) => {
@@ -148,85 +236,15 @@ export function ScriptDetailModal({
 
   if (!isOpen || !script) return null;
 
-  const handleImageError = () => {
-    setImageError(true);
-  };
-
   const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
-      onClose();
-    }
+    if (e.target === e.currentTarget) onClose();
   };
 
-  const handleLoadScript = async () => {
+  const handleLoadScript = () => {
     if (!script) return;
-
     setIsLoading(true);
     setLoadMessage(null);
     loadScriptMutation.mutate({ slug: script.slug });
-  };
-
-  const handleInstallScript = () => {
-    if (!script) return;
-
-    // Check if script has multiple variants (default and alpine)
-    const installMethods = script.install_methods || [];
-    const hasMultipleVariants =
-      installMethods.filter(
-        (method) => method.type === "default" || method.type === "alpine",
-      ).length > 1;
-
-    if (hasMultipleVariants) {
-      // Show version selection modal first
-      setVersionModalOpen(true);
-    } else {
-      // Only one variant, proceed directly to execution mode
-      // Use the first available method or default to 'default' type
-      const defaultMethod = installMethods.find(
-        (method) => method.type === "default",
-      );
-      const firstMethod = installMethods[0];
-      setSelectedVersionType(
-        defaultMethod?.type ?? firstMethod?.type ?? "default",
-      );
-      setExecutionModeOpen(true);
-    }
-  };
-
-  const handleVersionSelect = (versionType: string) => {
-    setSelectedVersionType(versionType);
-    setVersionModalOpen(false);
-    setExecutionModeOpen(true);
-  };
-
-  const handleExecuteScript = (mode: "local" | "ssh", server?: Server, envVars?: Record<string, string | number | boolean>) => {
-    if (!script || !onInstallScript) return;
-
-    // Find the script path based on selected version type
-    const versionType = selectedVersionType ?? "default";
-    const scriptMethod =
-      script.install_methods?.find((method) => method.type === versionType) ??
-      script.install_methods?.[0];
-
-    if (scriptMethod) {
-      const scriptFile = scriptMethod.script ?? deriveScriptPath(script.type, scriptMethod.type, script.slug);
-      const scriptPath = `scripts/${scriptFile}`;
-      const scriptName = script.name;
-
-      // Pass execution mode, server info, and envVars to the parent
-      onInstallScript(scriptPath, scriptName, mode, server, envVars);
-
-      onClose(); // Close the modal when starting installation
-    }
-  };
-
-  const handleViewScript = () => {
-    setTextViewerOpen(true);
-  };
-
-  const handleDeleteScript = () => {
-    if (!script) return;
-    setDeleteConfirmOpen(true);
   };
 
   const handleConfirmDelete = () => {
@@ -237,750 +255,695 @@ export function ScriptDetailModal({
     deleteScriptMutation.mutate({ slug: script.slug });
   };
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-      onClick={handleBackdropClick}
-    >
-      <div className="bg-card border-border mx-2 max-h-[95vh] min-h-[80vh] w-full max-w-6xl overflow-y-auto rounded-lg border shadow-xl sm:mx-4 lg:mx-0">
-        {/* Header */}
-        <div className="border-border flex items-center justify-between border-b p-4 sm:p-6">
-          <div className="flex min-w-0 flex-1 items-center space-x-3 sm:space-x-4">
-            {script.logo && !imageError ? (
-              <Image
-                src={script.logo}
-                alt={`${script.name} logo`}
-                width={64}
-                height={64}
-                className="h-12 w-12 flex-shrink-0 rounded-lg object-contain sm:h-16 sm:w-16"
-                onError={handleImageError}
-              />
-            ) : (
-              <div className="bg-muted flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg sm:h-16 sm:w-16">
-                <span className="text-muted-foreground text-lg font-semibold sm:text-2xl">
-                  {script.name.charAt(0).toUpperCase()}
-                </span>
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <h2 className="text-foreground truncate text-xl font-bold sm:text-2xl">
-                {script.name}
-              </h2>
-              <div className="mt-1 flex flex-wrap items-center gap-1 sm:gap-2">
-                <TypeBadge type={script.type} />
-                {script.updateable && <UpdateableBadge />}
-                {script.privileged && <PrivilegedBadge />}
-                {script.repository_url && (
-                  <a
-                    href={script.repository_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="bg-muted text-muted-foreground border-border hover:bg-accent hover:text-foreground rounded border px-2 py-0.5 text-xs transition-colors"
-                    onClick={(e) => e.stopPropagation()}
-                    title={`Source: ${script.repository_url}`}
-                  >
-                    {/github\.com\/([^\/]+)\/([^\/]+)/
-                      .exec(script.repository_url)?.[0]
-                      ?.replace("https://", "") ?? script.repository_url}
-                  </a>
-                )}
-              </div>
-            </div>
+  const hasLocalFiles =
+    scriptFilesData?.success &&
+    (scriptFilesData.ctExists || scriptFilesData.installExists);
+  const hasDifferences =
+    comparisonData?.success && comparisonData.hasDifferences;
+  const isUpToDate = hasLocalFiles && !hasDifferences;
+  const scriptTypeNorm = (script.type ?? "").toLowerCase();
+  const isLxcType = scriptTypeNorm === "ct" || scriptTypeNorm === "lxc";
 
-            {/* Interface Port*/}
-            {script.interface_port && (
-              <div className="ml-3 flex-shrink-0 sm:ml-4">
-                <div className="bg-primary/10 border-primary/30 rounded-lg border px-3 py-1.5 sm:px-4 sm:py-2">
-                  <span className="text-muted-foreground mr-2 text-xs font-medium sm:text-sm">
-                    Port:
-                  </span>
-                  <span className="text-foreground font-mono text-sm font-semibold sm:text-base">
-                    {script.interface_port}
-                  </span>
+  return (
+    <ModalPortal>
+      <div
+        className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        style={{ zIndex }}
+        onClick={handleBackdropClick}
+      >
+        <div className="bg-card mx-2 flex h-[100dvh] w-screen flex-col overflow-hidden sm:mx-4 sm:h-[88vh] sm:max-h-[88vh] sm:w-[min(92vw,1100px)] sm:max-w-[min(92vw,1100px)] sm:rounded-2xl sm:border sm:shadow-2xl lg:w-[min(90vw,1240px)] lg:max-w-[min(90vw,1240px)]">
+          {/* Header */}
+          <div className="border-border/60 flex-shrink-0 border-b px-4 py-4 sm:px-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex min-w-0 items-center gap-4">
+                {script.logo && !imageError ? (
+                  <div className="border-border/60 bg-muted/30 relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border">
+                    <Image
+                      src={script.logo}
+                      alt=""
+                      width={56}
+                      height={56}
+                      className="object-contain p-1.5"
+                      unoptimized
+                      onError={() => setImageError(true)}
+                    />
+                  </div>
+                ) : (
+                  <div className="border-border/60 bg-muted/30 text-muted-foreground flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border">
+                    <span className="text-xl font-semibold">
+                      {script.name.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <h2 className="text-foreground truncate text-[clamp(1.25rem,2vw,1.75rem)] leading-tight font-bold tracking-tight">
+                    {script.name}
+                  </h2>
+                  {script.categories.length > 0 && (
+                    <p className="text-muted-foreground mt-0.5 text-sm">
+                      {script.categories.join(", ")}
+                    </p>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <TypeBadge type={script.type} />
+                    {script.is_dev && <DevBadge />}
+                    {script.updateable && <UpdateableBadge />}
+                    {script.privileged && <PrivilegedBadge />}
+                    {script.has_arm && (
+                      <span className="rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-0.5 text-[0.6875rem] font-medium text-emerald-600 dark:text-emerald-400">
+                        ARM
+                      </span>
+                    )}
+                    {script.version && (
+                      <span className="bg-primary/10 text-primary border-primary/20 rounded-full border px-2 py-0.5 text-[0.6875rem] font-medium">
+                        v{script.version}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
+              <div className="flex flex-shrink-0 items-center gap-1">
+                {orderedSlugs && orderedSlugs.length > 1 && (
+                  <div className="border-border bg-muted/20 flex items-center rounded-full border p-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 rounded-full"
+                      onClick={() =>
+                        previousSlug && onSelectSlug?.(previousSlug)
+                      }
+                      disabled={!previousSlug}
+                      title="Previous (←)"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-muted-foreground hidden px-1.5 text-[0.6875rem] tabular-nums select-none sm:inline">
+                      {activeIndex + 1}
+                      <span className="text-border mx-0.5">/</span>
+                      {orderedSlugs.length}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 rounded-full"
+                      onClick={() => nextSlug && onSelectSlug?.(nextSlug)}
+                      disabled={!nextSlug}
+                      title="Next (→)"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+                <div className="bg-border mx-1 hidden h-5 w-px sm:block" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 rounded-full"
+                  onClick={onClose}
+                  title="Close"
+                  aria-label="Close script details"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Bar */}
+          <div className="border-border/60 flex flex-shrink-0 flex-wrap items-center gap-2 border-b px-4 py-3 sm:px-6">
+            {!hasLocalFiles ? (
+              <Button
+                size="sm"
+                onClick={handleLoadScript}
+                disabled={isLoading}
+                className="bg-success text-success-foreground hover:bg-success/90 gap-1.5 text-xs"
+              >
+                {isLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                {isLoading ? "Loading..." : "Load Script"}
+              </Button>
+            ) : isUpToDate ? (
+              <Button
+                size="sm"
+                disabled
+                variant="outline"
+                className="gap-1.5 text-xs"
+              >
+                <Check className="h-3.5 w-3.5" /> Up to Date
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                onClick={handleLoadScript}
+                disabled={isLoading}
+                className="bg-warning text-warning-foreground hover:bg-warning/90 gap-1.5 text-xs"
+              >
+                {isLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
+                {isLoading ? "Updating..." : "Update Script"}
+              </Button>
+            )}
+            {hasLocalFiles && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setTextViewerOpen(true)}
+                className="gap-1.5 text-xs"
+              >
+                <Eye className="h-3.5 w-3.5" /> View
+              </Button>
+            )}
+            {hasLocalFiles && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setDeleteConfirmOpen(true)}
+                disabled={isDeleting}
+                className="ml-auto gap-1.5 text-xs"
+              >
+                {isDeleting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" />
+                )}
+                Delete
+              </Button>
             )}
           </div>
 
-          {/* Close Button */}
-          <Button
-            onClick={onClose}
-            variant="ghost"
-            size="icon"
-            className="text-muted-foreground hover:text-foreground ml-4 flex-shrink-0"
-          >
-            <svg
-              className="h-5 w-5 sm:h-6 sm:w-6"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </Button>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="border-border flex flex-col items-stretch space-y-2 border-b p-4 sm:flex-row sm:items-center sm:space-y-0 sm:space-x-2 sm:p-6">
-          {/* Install Button - only show if script files exist */}
-          {scriptFilesData?.success &&
-            scriptFilesData.ctExists &&
-            onInstallScript && (
-              <Button
-                onClick={handleInstallScript}
-                variant="outline"
-                size="default"
-                className="flex w-full items-center justify-center space-x-2 sm:w-auto"
-              >
-                <svg
-                  className="h-4 w-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+          {/* Status Messages */}
+          {(scriptFilesLoading || comparisonLoading || loadMessage) && (
+            <div className="flex-shrink-0 px-4 pt-3 sm:px-6">
+              {(scriptFilesLoading || comparisonLoading) && (
+                <div className="bg-primary/5 text-primary mb-2 flex items-center gap-2 rounded-lg px-3 py-2 text-xs">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading
+                  script status...
+                </div>
+              )}
+              {loadMessage && (
+                <div
+                  className={`mb-2 rounded-lg px-3 py-2 text-xs ${loadMessage.startsWith("[SUCCESS]") ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
-                  />
-                </svg>
-                <span>Install</span>
-              </Button>
-            )}
-
-          {/* View Button - only show if script files exist */}
-          {scriptFilesData?.success &&
-            (scriptFilesData.ctExists || scriptFilesData.installExists) && (
-              <Button
-                onClick={handleViewScript}
-                variant="outline"
-                size="default"
-                className="flex w-full items-center justify-center space-x-2 sm:w-auto"
-              >
-                <svg
-                  className="h-4 w-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                  />
-                </svg>
-                <span>View</span>
-              </Button>
-            )}
-
-          {/* Load/Update Script Button */}
-          {(() => {
-            const hasLocalFiles =
-              scriptFilesData?.success &&
-              (scriptFilesData.ctExists || scriptFilesData.installExists);
-            const hasDifferences =
-              comparisonData?.success && comparisonData.hasDifferences;
-            const isUpToDate = hasLocalFiles && !hasDifferences;
-
-            if (!hasLocalFiles) {
-              // No local files - show Load Script button
-              return (
-                <button
-                  onClick={handleLoadScript}
-                  disabled={isLoading}
-                  className={`flex items-center space-x-2 rounded-lg px-4 py-2 font-medium transition-colors ${
-                    isLoading
-                      ? "bg-muted text-muted-foreground cursor-not-allowed"
-                      : "bg-success text-success-foreground hover:bg-success/90"
-                  }`}
-                >
-                  {isLoading ? (
-                    <>
-                      <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-white"></div>
-                      <span>Loading...</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg
-                        className="h-4 w-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                        />
-                      </svg>
-                      <span>Load Script</span>
-                    </>
-                  )}
-                </button>
-              );
-            } else if (isUpToDate) {
-              // Local files exist and are up to date - show disabled Update button
-              return (
-                <button
-                  disabled
-                  className="bg-muted text-muted-foreground flex cursor-not-allowed items-center space-x-2 rounded-lg px-4 py-2 font-medium transition-colors"
-                >
-                  <svg
-                    className="h-4 w-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                    />
-                  </svg>
-                  <span>Up to Date</span>
-                </button>
-              );
-            } else {
-              // Local files exist but have differences - show Update button
-              return (
-                <button
-                  onClick={handleLoadScript}
-                  disabled={isLoading}
-                  className={`flex items-center space-x-2 rounded-lg px-4 py-2 font-medium transition-colors ${
-                    isLoading
-                      ? "bg-muted text-muted-foreground cursor-not-allowed"
-                      : "bg-warning text-warning-foreground hover:bg-warning/90"
-                  }`}
-                >
-                  {isLoading ? (
-                    <>
-                      <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-white"></div>
-                      <span>Updating...</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg
-                        className="h-4 w-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                        />
-                      </svg>
-                      <span>Update Script</span>
-                    </>
-                  )}
-                </button>
-              );
-            }
-          })()}
-
-          {/* Delete Button - only show if script files exist */}
-          {scriptFilesData?.success &&
-            (scriptFilesData.ctExists || scriptFilesData.installExists) && (
-              <Button
-                onClick={handleDeleteScript}
-                disabled={isDeleting}
-                variant="destructive"
-                size="default"
-                className="flex w-full items-center justify-center space-x-2 sm:w-auto"
-              >
-                {isDeleting ? (
-                  <>
-                    <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-white"></div>
-                    <span>Deleting...</span>
-                  </>
-                ) : (
-                  <>
-                    <svg
-                      className="h-4 w-4"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
-                    </svg>
-                    <span>Delete Script</span>
-                  </>
-                )}
-              </Button>
-            )}
-        </div>
-
-        {/* Content */}
-        <div className="space-y-4 p-4 sm:space-y-6 sm:p-6">
-          {/* Script Files Status */}
-          {(scriptFilesLoading || comparisonLoading) && (
-            <div className="bg-primary/10 text-primary mb-4 rounded-lg p-3 text-sm">
-              <div className="flex items-center space-x-2">
-                <div className="border-primary h-4 w-4 animate-spin rounded-full border-b-2"></div>
-                <span>Loading script status...</span>
-              </div>
+                  {loadMessage.replace(/^\[(SUCCESS|ERROR)\]\s*/, "")}
+                </div>
+              )}
             </div>
           )}
 
-          {scriptFilesData?.success &&
-            !scriptFilesLoading &&
-            (() => {
-              // Determine script type from the first install method
-              const firstScript = script?.install_methods?.[0]?.script;
-              let scriptType = "Script";
-              if (firstScript?.startsWith("ct/")) {
-                scriptType = "CT Script";
-              } else if (firstScript?.startsWith("tools/")) {
-                scriptType = "Tools Script";
-              } else if (firstScript?.startsWith("vm/")) {
-                scriptType = "VM Script";
-              } else if (firstScript?.startsWith("vw/")) {
-                scriptType = "VW Script";
-              }
+          {/* 2-column content */}
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+            <div
+              className={`flex flex-col gap-5 ${terminalActive ? "" : "lg:grid lg:grid-cols-[minmax(0,1.55fr)_22rem] lg:items-start xl:grid-cols-[minmax(0,1.7fr)_24rem]"}`}
+            >
+              {/* Left: Main Content */}
+              <div className="min-w-0 space-y-4">
+                <section className="glass-card-static rounded-2xl border p-5">
+                  <h2 className="text-muted-foreground mb-3 text-sm font-semibold tracking-[0.1em] uppercase">
+                    About
+                  </h2>
+                  <p className="text-foreground text-sm leading-relaxed sm:text-base">
+                    {script.description}
+                  </p>
+                </section>
 
-              return (
-                <div className="bg-muted text-muted-foreground mb-4 rounded-lg p-3 text-sm">
-                  <div className="flex flex-col space-y-2 sm:flex-row sm:items-center sm:space-y-0 sm:space-x-4">
-                    <div className="flex items-center space-x-2">
-                      <div
-                        className={`h-2 w-2 rounded-full ${scriptFilesData.ctExists ? "bg-success" : "bg-muted"}`}
-                      ></div>
-                      <span>
-                        {scriptType}:{" "}
-                        {scriptFilesData.ctExists ? "Available" : "Not loaded"}
-                      </span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <div
-                        className={`h-2 w-2 rounded-full ${scriptFilesData.installExists ? "bg-success" : "bg-muted"}`}
-                      ></div>
-                      <span>
-                        Install Script:{" "}
-                        {scriptFilesData.installExists
-                          ? "Available"
-                          : "Not loaded"}
-                      </span>
-                    </div>
-                    {scriptFilesData?.success &&
-                      (scriptFilesData.ctExists ||
-                        scriptFilesData.installExists) && (
-                        <div className="flex items-center space-x-2">
-                          {comparisonData?.success ? (
-                            <>
-                              <div
-                                className={`h-2 w-2 rounded-full ${comparisonData.hasDifferences ? "bg-warning" : "bg-success"}`}
-                              ></div>
-                              <span>
-                                Status:{" "}
-                                {comparisonData.hasDifferences
+                {script.notes.length > 0 && (
+                  <section className="glass-card-static rounded-2xl border p-5">
+                    <h2 className="text-muted-foreground mb-3 text-sm font-semibold tracking-[0.1em] uppercase">
+                      Notes
+                    </h2>
+                    <ul className="space-y-2">
+                      {script.notes.map((note, index) => {
+                        const noteText =
+                          typeof note === "string" ? note : note.text;
+                        const noteType =
+                          typeof note === "string" ? "info" : note.type;
+                        return (
+                          <li
+                            key={index}
+                            className={`rounded-lg p-3 text-sm ${noteType === "warning" ? "border-warning bg-warning/10 text-warning border-l-4" : noteType === "error" ? "border-destructive bg-destructive/10 text-destructive border-l-4" : "bg-muted text-muted-foreground"}`}
+                          >
+                            <div className="flex items-start">
+                              <NoteBadge
+                                noteType={
+                                  noteType as "info" | "warning" | "error"
+                                }
+                                className="mr-2 flex-shrink-0"
+                              >
+                                {noteType}
+                              </NoteBadge>
+                              <span>{noteText}</span>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                )}
+
+                {script.type !== "misc" && (
+                  <InstallCommandBlock
+                    scriptType={script.type}
+                    slug={script.slug}
+                    scriptName={script.name}
+                    isDev={script.is_dev}
+                    hasAlpine={hasAlpine}
+                    defaults={installDefaults}
+                    hasArm={script.has_arm}
+                    hasLocalFiles={!!hasLocalFiles}
+                    onTerminalChange={setTerminalActive}
+                    executeIn={script.execute_in}
+                  />
+                )}
+
+                {scriptFilesData?.success && !scriptFilesLoading && (
+                  <section className="glass-card-static rounded-2xl border p-5">
+                    <h2 className="text-muted-foreground mb-3 text-sm font-semibold tracking-[0.1em] uppercase">
+                      Local Status
+                    </h2>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm">
+                        <div
+                          className={`h-2 w-2 rounded-full ${scriptFilesData.ctExists ? "bg-success" : "bg-muted-foreground/30"}`}
+                        />
+                        <span className="text-muted-foreground">
+                          Script File:{" "}
+                          <span className="text-foreground font-medium">
+                            {scriptFilesData.ctExists
+                              ? "Available"
+                              : "Not loaded"}
+                          </span>
+                        </span>
+                      </div>
+                      {isLxcType ? (
+                        <div className="flex items-center gap-2 text-sm">
+                          <div
+                            className={`h-2 w-2 rounded-full ${scriptFilesData.installExists ? "bg-success" : "bg-muted-foreground/30"}`}
+                          />
+                          <span className="text-muted-foreground">
+                            Install Script:{" "}
+                            <span className="text-foreground font-medium">
+                              {scriptFilesData.installExists
+                                ? "Available"
+                                : "Not loaded"}
+                            </span>
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-sm">
+                          <div className="bg-muted-foreground/30 h-2 w-2 rounded-full" />
+                          <span className="text-muted-foreground">
+                            Install Script:{" "}
+                            <span className="text-foreground font-medium">
+                              N/A for{" "}
+                              {script.type?.toUpperCase() ?? "this type"}
+                            </span>
+                          </span>
+                        </div>
+                      )}
+                      {hasLocalFiles && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <div
+                            className={`h-2 w-2 rounded-full ${comparisonLoading ? "bg-muted-foreground/30 animate-pulse" : hasDifferences ? "bg-warning" : "bg-success"}`}
+                          />
+                          <span className="text-muted-foreground">
+                            Status:{" "}
+                            <span className="text-foreground font-medium">
+                              {comparisonLoading
+                                ? "Checking..."
+                                : hasDifferences
                                   ? "Update available"
                                   : "Up to date"}
-                              </span>
-                            </>
-                          ) : comparisonLoading ? (
-                            <>
-                              <div className="bg-muted h-2 w-2 animate-pulse rounded-full"></div>
-                              <span>Checking for updates...</span>
-                            </>
-                          ) : comparisonData?.error ? (
-                            <>
-                              <div className="bg-destructive h-2 w-2 rounded-full"></div>
-                              <span className="text-destructive">
-                                Error: {comparisonData.error}
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <div className="bg-muted h-2 w-2 rounded-full"></div>
-                              <span>Status: Unknown</span>
-                            </>
-                          )}
+                            </span>
+                          </span>
                           <button
                             onClick={() => void refetchComparison()}
                             disabled={comparisonLoading}
-                            className="hover:bg-accent ml-2 flex items-center justify-center rounded-md p-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                            title="Refresh comparison"
+                            className="hover:bg-accent ml-1 rounded-md p-1 transition-colors disabled:opacity-50"
+                            title="Refresh"
                           >
-                            {comparisonLoading ? (
-                              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"></div>
-                            ) : (
-                              <svg
-                                className="text-muted-foreground hover:text-foreground h-4 w-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                                />
-                              </svg>
-                            )}
+                            <RefreshCw
+                              className={`text-muted-foreground h-3 w-3 ${comparisonLoading ? "animate-spin" : ""}`}
+                            />
                           </button>
                         </div>
                       )}
-                  </div>
-                  {scriptFilesData.files.length > 0 && (
-                    <div className="text-muted-foreground mt-2 text-xs break-words">
-                      Files: {scriptFilesData.files.join(", ")}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-
-          {/* Load Message */}
-          {loadMessage && (
-            <div className="bg-primary/10 text-primary mb-4 rounded-lg p-3 text-sm">
-              {loadMessage}
-            </div>
-          )}
-
-          {/* Description */}
-          <div>
-            <h3 className="text-foreground mb-2 text-base font-semibold sm:text-lg">
-              Description
-            </h3>
-            <p className="text-muted-foreground text-sm sm:text-base">
-              {script.description}
-            </p>
-          </div>
-
-          {/* Basic Information */}
-          <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
-            <div>
-              <h3 className="text-foreground mb-3 text-base font-semibold sm:text-lg">
-                Basic Information
-              </h3>
-              <dl className="space-y-2">
-                <div>
-                  <dt className="text-muted-foreground text-sm font-medium">
-                    Slug
-                  </dt>
-                  <dd className="text-foreground font-mono text-sm">
-                    {script.slug}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground text-sm font-medium">
-                    Date Created
-                  </dt>
-                  <dd className="text-foreground text-sm">
-                    {script.date_created}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground text-sm font-medium">
-                    Categories
-                  </dt>
-                  <dd className="text-foreground text-sm">
-                    {script.categories.join(", ")}
-                  </dd>
-                </div>
-                {script.interface_port && (
-                  <div>
-                    <dt className="text-muted-foreground text-sm font-medium">
-                      Interface Port
-                    </dt>
-                    <dd className="text-foreground text-sm">
-                      {script.interface_port}
-                    </dd>
-                  </div>
-                )}
-                {script.config_path && (
-                  <div>
-                    <dt className="text-muted-foreground text-sm font-medium">
-                      Config Path
-                    </dt>
-                    <dd className="text-foreground font-mono text-sm">
-                      {script.config_path}
-                    </dd>
-                  </div>
-                )}
-              </dl>
-            </div>
-
-            <div>
-              <h3 className="text-foreground mb-3 text-base font-semibold sm:text-lg">
-                Links
-              </h3>
-              <dl className="space-y-2">
-                {script.website && (
-                  <div>
-                    <dt className="text-muted-foreground text-sm font-medium">
-                      Website
-                    </dt>
-                    <dd className="text-sm">
-                      <a
-                        href={script.website}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:text-primary/80 break-all"
-                      >
-                        {script.website}
-                      </a>
-                    </dd>
-                  </div>
-                )}
-                {script.documentation && (
-                  <div>
-                    <dt className="text-muted-foreground text-sm font-medium">
-                      Documentation
-                    </dt>
-                    <dd className="text-sm">
-                      <a
-                        href={script.documentation}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:text-primary/80 break-all"
-                      >
-                        {script.documentation}
-                      </a>
-                    </dd>
-                  </div>
-                )}
-              </dl>
-            </div>
-          </div>
-
-          {/* Install Methods - Hide for PVE and ADDON types as they typically don't have install methods */}
-          {script.install_methods.length > 0 &&
-            script.type !== "pve" &&
-            script.type !== "addon" && (
-              <div>
-                <h3 className="text-foreground mb-3 text-base font-semibold sm:text-lg">
-                  Install Methods
-                </h3>
-                <div className="space-y-4">
-                  {script.install_methods.map((method, index) => (
-                    <div
-                      key={index}
-                      className="border-border bg-card rounded-lg border p-3 sm:p-4"
-                    >
-                      <div className="mb-3 flex flex-col justify-between space-y-1 sm:flex-row sm:items-center sm:space-y-0">
-                        <h4 className="text-foreground text-sm font-medium capitalize sm:text-base">
-                          {method.type}
-                        </h4>
-                        <span className="text-muted-foreground font-mono text-xs break-all sm:text-sm">
-                          {method.script}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs sm:gap-4 sm:text-sm lg:grid-cols-4">
-                        <div>
-                          <dt className="text-muted-foreground font-medium">
-                            CPU
-                          </dt>
-                          <dd className="text-foreground">
-                            {method.resources.cpu} cores
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-muted-foreground font-medium">
-                            RAM
-                          </dt>
-                          <dd className="text-foreground">
-                            {method.resources.ram} MB
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-muted-foreground font-medium">
-                            HDD
-                          </dt>
-                          <dd className="text-foreground">
-                            {method.resources.hdd} GB
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-muted-foreground font-medium">
-                            OS
-                          </dt>
-                          <dd className="text-foreground">
-                            {method.resources.os} {method.resources.version}
-                          </dd>
-                        </div>
-                      </div>
-                      {method.config_path && (
-                        <div className="mt-2 text-xs sm:text-sm">
-                          <dt className="text-muted-foreground font-medium">
-                            Config Path
-                          </dt>
-                          <dd className="text-foreground font-mono text-xs break-all">
-                            {method.config_path}
-                          </dd>
+                      {scriptFilesData.files.length > 0 && (
+                        <div className="text-muted-foreground mt-1 text-xs break-words">
+                          Files ({scriptFilesData.files.length}):{" "}
+                          {scriptFilesData.files
+                            .slice()
+                            .sort((a, b) => a.localeCompare(b))
+                            .join(", ")}
                         </div>
                       )}
                     </div>
-                  ))}
-                </div>
+                  </section>
+                )}
               </div>
-            )}
 
-          {/* Default Credentials */}
-          {(script.default_credentials.username ??
-            script.default_credentials.password) && (
-            <div>
-              <h3 className="text-foreground mb-3 text-base font-semibold sm:text-lg">
-                Default Credentials
-              </h3>
-              <dl className="space-y-2">
-                {script.default_credentials.username && (
-                  <div>
-                    <dt className="text-muted-foreground text-sm font-medium">
-                      Username
-                    </dt>
-                    <dd className="text-foreground font-mono text-sm">
-                      {script.default_credentials.username}
-                    </dd>
-                  </div>
-                )}
-                {script.default_credentials.password && (
-                  <div>
-                    <dt className="text-muted-foreground text-sm font-medium">
-                      Password
-                    </dt>
-                    <dd className="text-foreground font-mono text-sm">
-                      {script.default_credentials.password}
-                    </dd>
-                  </div>
-                )}
-              </dl>
-            </div>
-          )}
+              {/* Right: Sidebar */}
+              <aside className="w-full shrink-0 lg:sticky lg:top-0 lg:self-start">
+                <div className="space-y-4">
+                  {(Boolean(script.interface_port) ||
+                    Boolean(script.default_credentials.username) ||
+                    Boolean(script.default_credentials.password)) && (
+                    <div className="border-primary/20 bg-primary/5 dark:bg-primary/[0.07] rounded-2xl border p-4">
+                      <h3 className="text-primary mb-3 flex items-center gap-1.5 text-sm font-semibold tracking-[0.1em] uppercase">
+                        <ServerIcon className="h-3.5 w-3.5" /> Access
+                      </h3>
+                      <dl className="space-y-2 text-sm">
+                        {script.interface_port && (
+                          <div className="flex items-center justify-between gap-2">
+                            <dt className="text-muted-foreground">Port</dt>
+                            <dd>
+                              <code className="bg-background/60 rounded px-2 py-0.5 text-sm font-semibold">
+                                :{script.interface_port}
+                              </code>
+                            </dd>
+                          </div>
+                        )}
+                        {script.default_credentials.username && (
+                          <div className="flex items-center justify-between gap-2">
+                            <dt className="text-muted-foreground">User</dt>
+                            <dd>
+                              <code className="bg-background/60 rounded px-2 py-0.5 font-mono text-sm">
+                                {script.default_credentials.username}
+                              </code>
+                            </dd>
+                          </div>
+                        )}
+                        {script.default_credentials.password && (
+                          <div className="flex items-center justify-between gap-2">
+                            <dt className="text-muted-foreground">Password</dt>
+                            <dd>
+                              <code className="bg-background/60 rounded px-2 py-0.5 font-mono text-sm">
+                                {script.default_credentials.password}
+                              </code>
+                            </dd>
+                          </div>
+                        )}
+                      </dl>
+                    </div>
+                  )}
 
-          {/* Notes */}
-          {script.notes.length > 0 && (
-            <div>
-              <h3 className="text-foreground mb-3 text-lg font-semibold">
-                Notes
-              </h3>
-              <ul className="space-y-2">
-                {script.notes.map((note, index) => {
-                  // Handle both object and string note formats
-                  const noteText = typeof note === "string" ? note : note.text;
-                  const noteType =
-                    typeof note === "string" ? "info" : note.type;
-
-                  return (
-                    <li
-                      key={index}
-                      className={`rounded-lg p-3 text-sm ${
-                        noteType === "warning"
-                          ? "border-warning bg-warning/10 text-warning border-l-4"
-                          : noteType === "error"
-                            ? "border-destructive bg-destructive/10 text-destructive border-l-4"
-                            : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      <div className="flex items-start">
-                        <NoteBadge
-                          noteType={noteType as "info" | "warning" | "error"}
-                          className="mr-2 flex-shrink-0"
-                        >
-                          {noteType}
-                        </NoteBadge>
-                        <span>{noteText}</span>
+                  {matchingContainers.length > 0 && (
+                    <div className="border-primary/20 bg-primary/5 dark:bg-primary/[0.07] rounded-2xl border p-4">
+                      <h3 className="text-primary mb-3 flex items-center gap-1.5 text-sm font-semibold tracking-[0.1em] uppercase">
+                        <Terminal className="h-3.5 w-3.5" /> Containers
+                      </h3>
+                      <div className="space-y-2">
+                        {matchingContainers.map((container: any) => (
+                          <div
+                            key={container.id}
+                            className="flex items-center justify-between gap-2"
+                          >
+                            <div className="min-w-0">
+                              <span className="text-sm font-medium">
+                                {container.container_id}
+                              </span>
+                              {container.server_name && (
+                                <span className="text-muted-foreground ml-1 text-xs">
+                                  ({container.server_name})
+                                </span>
+                              )}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 shrink-0 gap-1 text-xs"
+                              onClick={() => {
+                                const server =
+                                  container.server_id && container.server_user
+                                    ? {
+                                        id: container.server_id,
+                                        name: container.server_name ?? "",
+                                        ip: container.server_ip ?? "",
+                                        user: container.server_user,
+                                        password:
+                                          container.server_password ??
+                                          undefined,
+                                        auth_type:
+                                          container.server_auth_type ??
+                                          "password",
+                                        ssh_key:
+                                          container.server_ssh_key ?? undefined,
+                                        ssh_key_passphrase:
+                                          container.server_ssh_key_passphrase ??
+                                          undefined,
+                                        ssh_port:
+                                          container.server_ssh_port ?? 22,
+                                        created_at: null,
+                                        updated_at: null,
+                                      }
+                                    : undefined;
+                                openShell({
+                                  containerId: container.container_id,
+                                  containerName: container.script_name,
+                                  server,
+                                  containerType: container.is_vm ? "vm" : "lxc",
+                                });
+                              }}
+                            >
+                              <Terminal className="h-3 w-3" /> Shell
+                            </Button>
+                          </div>
+                        ))}
                       </div>
-                    </li>
-                  );
-                })}
-              </ul>
+                    </div>
+                  )}
+
+                  <div className="glass-card-static rounded-2xl border p-5">
+                    <h2 className="text-muted-foreground mb-4 text-sm font-semibold tracking-[0.1em] uppercase">
+                      Details
+                    </h2>
+                    <dl className="space-y-3 text-sm">
+                      {script.execute_in && script.execute_in.length > 0 && (
+                        <div className="flex items-start justify-between gap-3">
+                          <dt className="text-muted-foreground">Runs in</dt>
+                          <dd className="flex flex-wrap justify-end gap-1">
+                            {script.execute_in.map((env) => (
+                              <span
+                                key={env}
+                                className="bg-muted/50 text-muted-foreground rounded-full px-2 py-0.5 text-[0.6875rem] font-medium uppercase dark:bg-white/[0.06]"
+                              >
+                                {env}
+                              </span>
+                            ))}
+                          </dd>
+                        </div>
+                      )}
+                      {script.version && (
+                        <div className="flex items-start justify-between gap-3">
+                          <dt className="text-muted-foreground">Version</dt>
+                          <dd className="text-right font-medium">
+                            {script.version}
+                          </dd>
+                        </div>
+                      )}
+                      {script.categories.length > 0 && (
+                        <div className="flex items-start justify-between gap-3">
+                          <dt className="text-muted-foreground">Category</dt>
+                          <dd className="text-primary text-right font-medium">
+                            {script.categories.join(", ")}
+                          </dd>
+                        </div>
+                      )}
+                      {script.website && (
+                        <div className="flex items-start justify-between gap-3">
+                          <dt className="text-muted-foreground">Website</dt>
+                          <dd>
+                            <a
+                              href={script.website}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary inline-flex items-center gap-1 font-medium hover:underline"
+                            >
+                              Link <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </dd>
+                        </div>
+                      )}
+                      {script.documentation && (
+                        <div className="flex items-start justify-between gap-3">
+                          <dt className="text-muted-foreground">Docs</dt>
+                          <dd>
+                            <a
+                              href={script.documentation}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary inline-flex items-center gap-1 font-medium hover:underline"
+                            >
+                              Link <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </dd>
+                        </div>
+                      )}
+                      {script.config_path && (
+                        <div className="flex items-start justify-between gap-3">
+                          <dt className="text-muted-foreground">Config</dt>
+                          <dd className="text-right font-mono text-xs">
+                            {script.config_path}
+                          </dd>
+                        </div>
+                      )}
+                      {script.repository_url && (
+                        <div className="flex items-start justify-between gap-3">
+                          <dt className="text-muted-foreground">Source</dt>
+                          <dd>
+                            <a
+                              href={script.repository_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary inline-flex items-center gap-1 font-medium hover:underline"
+                            >
+                              View <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </dd>
+                        </div>
+                      )}
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="text-muted-foreground">Created</dt>
+                        <dd className="text-right font-medium">
+                          {new Date(script.date_created).toLocaleDateString(
+                            undefined,
+                            { dateStyle: "medium" },
+                          )}
+                        </dd>
+                      </div>
+                    </dl>
+
+                    {script.install_methods.length > 0 &&
+                      script.type !== "pve" &&
+                      script.type !== "addon" && (
+                        <div className="border-border/60 mt-5 border-t pt-5">
+                          <h3 className="text-muted-foreground mb-3 text-sm font-semibold tracking-[0.1em] uppercase">
+                            Install profiles
+                          </h3>
+                          <div className="space-y-3">
+                            {script.install_methods.map((method, index) => (
+                              <div
+                                key={index}
+                                className="border-border bg-muted/30 rounded-xl border p-3 dark:bg-white/[0.04]"
+                              >
+                                <div className="mb-2 flex items-center justify-between gap-2">
+                                  <span className="text-foreground text-sm font-semibold capitalize">
+                                    {method.type}
+                                  </span>
+                                  {(method.resources.os ||
+                                    method.resources.version) && (
+                                    <span className="bg-muted/50 text-muted-foreground rounded-full px-2 py-0.5 text-[0.6875rem] font-medium dark:bg-white/[0.06]">
+                                      {[
+                                        method.resources.os,
+                                        method.resources.version,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" ")}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex gap-2">
+                                  {method.resources.cpu > 0 && (
+                                    <div className="bg-muted/50 flex-1 rounded-lg px-2.5 py-1.5 text-center dark:bg-white/[0.07]">
+                                      <div className="text-foreground text-xs font-bold tabular-nums">
+                                        {method.resources.cpu}
+                                      </div>
+                                      <div className="text-muted-foreground text-[0.625rem] tracking-wider uppercase">
+                                        CPU
+                                      </div>
+                                    </div>
+                                  )}
+                                  {method.resources.ram > 0 && (
+                                    <div className="bg-muted/50 flex-1 rounded-lg px-2.5 py-1.5 text-center dark:bg-white/[0.07]">
+                                      <div className="text-foreground text-xs font-bold tabular-nums">
+                                        {method.resources.ram}
+                                      </div>
+                                      <div className="text-muted-foreground text-[0.625rem] tracking-wider uppercase">
+                                        RAM
+                                      </div>
+                                    </div>
+                                  )}
+                                  {method.resources.hdd > 0 && (
+                                    <div className="bg-muted/50 flex-1 rounded-lg px-2.5 py-1.5 text-center dark:bg-white/[0.07]">
+                                      <div className="text-foreground text-xs font-bold tabular-nums">
+                                        {method.resources.hdd}
+                                      </div>
+                                      <div className="text-muted-foreground text-[0.625rem] tracking-wider uppercase">
+                                        HDD
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                                {method.config_path && (
+                                  <div className="bg-muted/20 mt-2 rounded-md px-2 py-1.5 dark:bg-white/[0.03]">
+                                    <span className="text-muted-foreground text-[0.625rem] tracking-wider uppercase">
+                                      Config:{" "}
+                                    </span>
+                                    <code className="text-[0.6875rem]">
+                                      {method.config_path}
+                                    </code>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                  </div>
+                </div>
+              </aside>
             </div>
-          )}
+          </div>
         </div>
+
+        {selectedDiffFile && (
+          <DiffViewer
+            scriptSlug={script.slug}
+            filePath={selectedDiffFile}
+            isOpen={diffViewerOpen}
+            onClose={() => {
+              setDiffViewerOpen(false);
+              setSelectedDiffFile(null);
+            }}
+          />
+        )}
+        {script && (
+          <TextViewer
+            scriptName={
+              script.install_methods
+                ?.find(
+                  (m) =>
+                    m.script &&
+                    (m.script.startsWith("ct/") ||
+                      m.script.startsWith("vm/") ||
+                      m.script.startsWith("tools/")),
+                )
+                ?.script?.split("/")
+                .pop() ?? `${script.slug}.sh`
+            }
+            script={script}
+            isOpen={textViewerOpen}
+            onClose={() => setTextViewerOpen(false)}
+          />
+        )}
+        {script && (
+          <ConfirmationModal
+            isOpen={deleteConfirmOpen}
+            onClose={() => setDeleteConfirmOpen(false)}
+            onConfirm={handleConfirmDelete}
+            title="Delete Script"
+            message={`Are you sure you want to delete all downloaded files for "${script.name}"? This action cannot be undone.`}
+            variant="simple"
+            confirmButtonText="Delete"
+            cancelButtonText="Cancel"
+          />
+        )}
       </div>
-
-      {/* Diff Viewer Modal */}
-      {selectedDiffFile && (
-        <DiffViewer
-          scriptSlug={script.slug}
-          filePath={selectedDiffFile}
-          isOpen={diffViewerOpen}
-          onClose={() => {
-            setDiffViewerOpen(false);
-            setSelectedDiffFile(null);
-          }}
-        />
-      )}
-
-      {/* Text Viewer Modal */}
-      {script && (
-        <TextViewer
-          scriptName={
-            script.install_methods
-              ?.find(
-                (method) =>
-                  method.script &&
-                  (method.script.startsWith("ct/") ||
-                    method.script.startsWith("vm/") ||
-                    method.script.startsWith("tools/")),
-              )
-              ?.script?.split("/")
-              .pop() ?? `${script.slug}.sh`
-          }
-          script={script}
-          isOpen={textViewerOpen}
-          onClose={() => setTextViewerOpen(false)}
-        />
-      )}
-
-      {/* Version Selection Modal */}
-      {script && (
-        <ScriptVersionModal
-          script={script}
-          isOpen={versionModalOpen}
-          onClose={() => setVersionModalOpen(false)}
-          onSelectVersion={handleVersionSelect}
-        />
-      )}
-
-      {/* Execution Mode Modal */}
-      {script && (
-        <ExecutionModeModal
-          scriptName={script.name}
-          script={script}
-          isOpen={executionModeOpen}
-          onClose={() => setExecutionModeOpen(false)}
-          onExecute={handleExecuteScript}
-        />
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {script && (
-        <ConfirmationModal
-          isOpen={deleteConfirmOpen}
-          onClose={() => setDeleteConfirmOpen(false)}
-          onConfirm={handleConfirmDelete}
-          title="Delete Script"
-          message={`Are you sure you want to delete all downloaded files for "${script.name}"? This action cannot be undone.`}
-          variant="simple"
-          confirmButtonText="Delete"
-          cancelButtonText="Cancel"
-        />
-      )}
-    </div>
+    </ModalPortal>
   );
 }

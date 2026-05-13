@@ -1,19 +1,19 @@
-﻿import { readFile, readdir, writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
-import type { Script, ScriptCard } from '~/types/script';
-import { scriptDownloaderService } from './scriptDownloader.js';
+import { readFile, readdir, writeFile, mkdir } from "fs/promises";
+import { join } from "path";
+import type { Script, ScriptCard } from "~/types/script";
+import { scriptDownloaderService } from "./scriptDownloader.js";
 
 export class LocalScriptsService {
   private scriptsDirectory: string;
 
   constructor() {
-    this.scriptsDirectory = join(process.cwd(), 'scripts', 'json');
+    this.scriptsDirectory = join(process.cwd(), "scripts", "json");
   }
 
   async getJsonFiles(): Promise<string[]> {
     try {
       const files = await readdir(this.scriptsDirectory);
-      return files.filter(file => file.endsWith('.json'));
+      return files.filter((file) => file.endsWith(".json"));
     } catch {
       return [];
     }
@@ -22,7 +22,7 @@ export class LocalScriptsService {
   async getScriptContent(filename: string): Promise<Script> {
     try {
       const filePath = join(this.scriptsDirectory, filename);
-      const content = await readFile(filePath, 'utf-8');
+      const content = await readFile(filePath, "utf-8");
       return JSON.parse(content) as Script;
     } catch (error) {
       console.error(`Error reading script file ${filename}:`, error);
@@ -33,41 +33,49 @@ export class LocalScriptsService {
   /** Returns all scripts from PocketBase (community scripts) merged with any local JSON user scripts. */
   async getAllScripts(): Promise<Script[]> {
     try {
-      const { getAllScripts: pbGetAll } = await import('./pbScripts');
+      const { getAllScripts: pbGetAll } = await import("./pbScripts");
       const pbScripts = await pbGetAll();
 
-      const communityScripts: Script[] = pbScripts.map(pb => ({
+      const communityScripts: Script[] = pbScripts.map((pb) => ({
         name: pb.name,
         slug: pb.slug,
         description: pb.description,
         logo: pb.logo ?? null,
-        type: pb.type as Script['type'],
+        type: pb.type,
         updateable: pb.updateable,
         privileged: pb.privileged,
         interface_port: pb.port ?? null,
         website: pb.website ?? null,
         documentation: pb.documentation ?? null,
         config_path: pb.config_path ?? null,
-        date_created: pb.script_created ?? '',
-        default_credentials: { username: pb.default_user ?? null, password: pb.default_passwd ?? null },
+        date_created: pb.script_created ?? "",
+        default_credentials: {
+          username: pb.default_user ?? null,
+          password: pb.default_passwd ?? null,
+        },
         is_dev: pb.is_dev,
         is_disabled: pb.is_disabled,
         is_deleted: pb.is_deleted,
         has_arm: pb.has_arm,
-        categories: pb.categories.map(c => c.name),
-        install_methods: pb.install_methods_json.map(m => ({
+        categories: pb.categories.map((c) => c.name),
+        install_methods: pb.install_methods.map((m) => ({
           type: m.type,
           resources: m.resources,
           config_path: m.config_path,
-          script: scriptDownloaderService.deriveScriptPath(pb.type, m.type, pb.slug) ?? undefined,
+          script:
+            scriptDownloaderService.deriveScriptPath(
+              pb.type,
+              m.type,
+              pb.slug,
+            ) ?? undefined,
         })),
-        notes: pb.notes_json.map(n => ({ text: n.text, type: n.type })),
+        notes: pb.notes.map((n) => ({ text: n.text, type: n.type })),
       }));
 
       // Merge local user JSON scripts (only those not already in PocketBase)
       try {
         const jsonFiles = await this.getJsonFiles();
-        const slugsSeen = new Set(communityScripts.map(s => s.slug));
+        const slugsSeen = new Set(communityScripts.map((s) => s.slug));
         for (const filename of jsonFiles) {
           try {
             const script = await this.getScriptContent(filename);
@@ -75,18 +83,29 @@ export class LocalScriptsService {
               communityScripts.push(script);
               slugsSeen.add(script.slug);
             }
-          } catch { /* skip bad files */ }
+          } catch {
+            /* skip bad files */
+          }
         }
-      } catch { /* local JSON folder absent – fine */ }
+      } catch {
+        /* local JSON folder absent – fine */
+      }
 
       return communityScripts;
     } catch (error) {
-      console.error('Error fetching scripts from PocketBase, falling back to local JSON:', error);
+      console.error(
+        "Error fetching scripts from PocketBase, falling back to local JSON:",
+        error,
+      );
       try {
         const jsonFiles = await this.getJsonFiles();
         const scripts: Script[] = [];
         for (const filename of jsonFiles) {
-          try { scripts.push(await this.getScriptContent(filename)); } catch { /* skip */ }
+          try {
+            scripts.push(await this.getScriptContent(filename));
+          } catch {
+            /* skip */
+          }
         }
         return scripts;
       } catch {
@@ -97,7 +116,7 @@ export class LocalScriptsService {
 
   async getScriptCards(): Promise<ScriptCard[]> {
     const scripts = await this.getAllScripts();
-    return scripts.map(script => ({
+    return scripts.map((script) => ({
       name: script.name,
       slug: script.slug,
       description: script.description,
@@ -111,7 +130,7 @@ export class LocalScriptsService {
   /** Fetches a script by slug, preferring PocketBase then local JSON. */
   async getScriptBySlug(slug: string): Promise<Script | null> {
     try {
-      const { getScriptBySlug: pbGetBySlug } = await import('./pbScripts');
+      const { getScriptBySlug: pbGetBySlug } = await import("./pbScripts");
       const pb = await pbGetBySlug(slug);
       if (pb) {
         return {
@@ -119,37 +138,48 @@ export class LocalScriptsService {
           slug: pb.slug,
           description: pb.description,
           logo: pb.logo ?? null,
-          type: pb.type as Script['type'],
+          type: pb.type,
           updateable: pb.updateable,
           privileged: pb.privileged,
           interface_port: pb.port ?? null,
           website: pb.website ?? null,
           documentation: pb.documentation ?? null,
           config_path: pb.config_path ?? null,
-          date_created: pb.script_created ?? '',
-          default_credentials: { username: pb.default_user ?? null, password: pb.default_passwd ?? null },
+          date_created: pb.script_created ?? "",
+          default_credentials: {
+            username: pb.default_user ?? null,
+            password: pb.default_passwd ?? null,
+          },
           is_dev: pb.is_dev,
           is_disabled: pb.is_disabled,
           is_deleted: pb.is_deleted,
           has_arm: pb.has_arm,
-          categories: pb.categories.map(c => c.name),
-          install_methods: pb.install_methods_json.map(m => ({
+          categories: pb.categories.map((c) => c.name),
+          install_methods: pb.install_methods.map((m) => ({
             type: m.type,
             resources: m.resources,
             config_path: m.config_path,
-            script: scriptDownloaderService.deriveScriptPath(pb.type, m.type, pb.slug) ?? undefined,
+            script:
+              scriptDownloaderService.deriveScriptPath(
+                pb.type,
+                m.type,
+                pb.slug,
+              ) ?? undefined,
           })),
-          notes: pb.notes_json.map(n => ({ text: n.text, type: n.type })),
+          notes: pb.notes.map((n) => ({ text: n.text, type: n.type })),
         };
       }
     } catch (error) {
-      console.warn(`PocketBase lookup failed for slug "${slug}", trying local JSON:`, error);
+      console.warn(
+        `PocketBase lookup failed for slug "${slug}", trying local JSON:`,
+        error,
+      );
     }
 
     // Fallback: local JSON user script
     try {
       const filePath = join(this.scriptsDirectory, `${slug}.json`);
-      const content = await readFile(filePath, 'utf-8');
+      const content = await readFile(filePath, "utf-8");
       return JSON.parse(content) as Script;
     } catch {
       return null;
@@ -158,7 +188,7 @@ export class LocalScriptsService {
 
   async getMetadata(): Promise<unknown> {
     try {
-      const { getMetadata } = await import('./pbScripts');
+      const { getMetadata } = await import("./pbScripts");
       return await getMetadata();
     } catch {
       return {};
@@ -171,11 +201,11 @@ export class LocalScriptsService {
       for (const script of scripts) {
         const filename = `${script.slug}.json`;
         const filePath = join(this.scriptsDirectory, filename);
-        await writeFile(filePath, JSON.stringify(script, null, 2), 'utf-8');
+        await writeFile(filePath, JSON.stringify(script, null, 2), "utf-8");
       }
     } catch (error) {
-      console.error('Error saving scripts from GitHub:', error);
-      throw new Error('Failed to save scripts from GitHub');
+      console.error("Error saving scripts from GitHub:", error);
+      throw new Error("Failed to save scripts from GitHub");
     }
   }
 }

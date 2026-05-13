@@ -1,8 +1,8 @@
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import { randomBytes } from 'crypto';
-import fs from 'fs';
-import path from 'path';
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { randomBytes } from "crypto";
+import fs from "fs";
+import path from "path";
 
 const SALT_ROUNDS = 10;
 const DEFAULT_JWT_EXPIRY_DAYS = 7; // Default 7 days
@@ -19,33 +19,34 @@ export function getJwtSecret(): string {
     return jwtSecretCache;
   }
 
-  const envPath = path.join(process.cwd(), '.env');
-  
+  const envPath = path.join(process.cwd(), ".env");
+
   // Read existing .env file
-  let envContent = '';
+  let envContent = "";
   if (fs.existsSync(envPath)) {
-    envContent = fs.readFileSync(envPath, 'utf8');
+    envContent = fs.readFileSync(envPath, "utf8");
   }
 
   // Check if JWT_SECRET already exists
   const jwtSecretRegex = /^JWT_SECRET=(.*)$/m;
   const jwtSecretMatch = jwtSecretRegex.exec(envContent);
-  
+
   if (jwtSecretMatch?.[1]?.trim()) {
     jwtSecretCache = jwtSecretMatch[1].trim();
     return jwtSecretCache;
   }
 
   // Generate new secret
-  const newSecret = randomBytes(64).toString('hex');
-  
+  const newSecret = randomBytes(64).toString("hex");
+
   // Add to .env file
-  envContent += (envContent.endsWith('\n') ? '' : '\n') + `JWT_SECRET=${newSecret}\n`;
+  envContent +=
+    (envContent.endsWith("\n") ? "" : "\n") + `JWT_SECRET=${newSecret}\n`;
   fs.writeFileSync(envPath, envContent);
-  
+
   // Cache the new secret
   jwtSecretCache = newSecret;
-  
+
   return newSecret;
 }
 
@@ -59,7 +60,10 @@ export async function hashPassword(password: string): Promise<string> {
 /**
  * Compare a password with a hash
  */
-export async function comparePassword(password: string, hash: string): Promise<boolean> {
+export async function comparePassword(
+  password: string,
+  hash: string,
+): Promise<boolean> {
   return bcrypt.compare(password, hash);
 }
 
@@ -75,9 +79,15 @@ export function generateToken(username: string, durationDays?: number): string {
 /**
  * Decode a JWT token without verification (for extracting expiration time)
  */
-export function decodeToken(token: string): { username: string; exp?: number; iat?: number } | null {
+export function decodeToken(
+  token: string,
+): { username: string; exp?: number; iat?: number } | null {
   try {
-    const decoded = jwt.decode(token) as { username: string; exp?: number; iat?: number } | null;
+    const decoded = jwt.decode(token) as {
+      username: string;
+      exp?: number;
+      iat?: number;
+    } | null;
     return decoded;
   } catch {
     return null;
@@ -87,10 +97,16 @@ export function decodeToken(token: string): { username: string; exp?: number; ia
 /**
  * Verify a JWT token
  */
-export function verifyToken(token: string): { username: string; exp?: number; iat?: number } | null {
+export function verifyToken(
+  token: string,
+): { username: string; exp?: number; iat?: number } | null {
   try {
     const secret = getJwtSecret();
-    const decoded = jwt.verify(token, secret) as { username: string; exp?: number; iat?: number };
+    const decoded = jwt.verify(token, secret) as {
+      username: string;
+      exp?: number;
+      iat?: number;
+    };
     return decoded;
   } catch {
     return null;
@@ -108,8 +124,8 @@ export function getAuthConfig(): {
   setupCompleted: boolean;
   sessionDurationDays: number;
 } {
-  const envPath = path.join(process.cwd(), '.env');
-  
+  const envPath = path.join(process.cwd(), ".env");
+
   if (!fs.existsSync(envPath)) {
     return {
       username: null,
@@ -121,37 +137,44 @@ export function getAuthConfig(): {
     };
   }
 
-  const envContent = fs.readFileSync(envPath, 'utf8');
-  
+  const envContent = fs.readFileSync(envPath, "utf8");
+
   // Extract AUTH_USERNAME
   const usernameRegex = /^AUTH_USERNAME=(.*)$/m;
   const usernameMatch = usernameRegex.exec(envContent);
   const username = usernameMatch ? usernameMatch[1]?.trim() : null;
-  
+
   // Extract AUTH_PASSWORD_HASH
   const passwordHashRegex = /^AUTH_PASSWORD_HASH=(.*)$/m;
   const passwordHashMatch = passwordHashRegex.exec(envContent);
   const passwordHash = passwordHashMatch ? passwordHashMatch[1]?.trim() : null;
-  
+
   // Extract AUTH_ENABLED
   const enabledRegex = /^AUTH_ENABLED=(.*)$/m;
   const enabledMatch = enabledRegex.exec(envContent);
-  const enabled = enabledMatch ? enabledMatch[1]?.trim().toLowerCase() === 'true' : false;
-  
+  const enabled = enabledMatch
+    ? enabledMatch[1]?.trim().toLowerCase() === "true"
+    : false;
+
   // Extract AUTH_SETUP_COMPLETED
   const setupCompletedRegex = /^AUTH_SETUP_COMPLETED=(.*)$/m;
   const setupCompletedMatch = setupCompletedRegex.exec(envContent);
-  const setupCompleted = setupCompletedMatch ? setupCompletedMatch[1]?.trim().toLowerCase() === 'true' : false;
-  
+  const setupCompleted = setupCompletedMatch
+    ? setupCompletedMatch[1]?.trim().toLowerCase() === "true"
+    : false;
+
   // Extract AUTH_SESSION_DURATION_DAYS
   const sessionDurationRegex = /^AUTH_SESSION_DURATION_DAYS=(.*)$/m;
   const sessionDurationMatch = sessionDurationRegex.exec(envContent);
-  const sessionDurationDays = sessionDurationMatch 
-    ? parseInt(sessionDurationMatch[1]?.trim() ?? String(DEFAULT_JWT_EXPIRY_DAYS), 10) || DEFAULT_JWT_EXPIRY_DAYS
+  const sessionDurationDays = sessionDurationMatch
+    ? parseInt(
+        sessionDurationMatch[1]?.trim() ?? String(DEFAULT_JWT_EXPIRY_DAYS),
+        10,
+      ) || DEFAULT_JWT_EXPIRY_DAYS
     : DEFAULT_JWT_EXPIRY_DAYS;
-  
+
   const hasCredentials = !!(username && passwordHash);
-  
+
   return {
     username: username ?? null,
     passwordHash: passwordHash ?? null,
@@ -168,14 +191,14 @@ export function getAuthConfig(): {
 export async function updateAuthCredentials(
   username: string,
   password?: string,
-  enabled?: boolean
+  enabled?: boolean,
 ): Promise<void> {
-  const envPath = path.join(process.cwd(), '.env');
-  
+  const envPath = path.join(process.cwd(), ".env");
+
   // Read existing .env file
-  let envContent = '';
+  let envContent = "";
   if (fs.existsSync(envPath)) {
-    envContent = fs.readFileSync(envPath, 'utf8');
+    envContent = fs.readFileSync(envPath, "utf8");
   }
 
   // Hash the password if provided
@@ -186,16 +209,22 @@ export async function updateAuthCredentials(
   if (usernameRegex.test(envContent)) {
     envContent = envContent.replace(usernameRegex, `AUTH_USERNAME=${username}`);
   } else {
-    envContent += (envContent.endsWith('\n') ? '' : '\n') + `AUTH_USERNAME=${username}\n`;
+    envContent +=
+      (envContent.endsWith("\n") ? "" : "\n") + `AUTH_USERNAME=${username}\n`;
   }
 
   // Update or add AUTH_PASSWORD_HASH only if password is provided
   if (passwordHash) {
     const passwordHashRegex = /^AUTH_PASSWORD_HASH=.*$/m;
     if (passwordHashRegex.test(envContent)) {
-      envContent = envContent.replace(passwordHashRegex, `AUTH_PASSWORD_HASH=${passwordHash}`);
+      envContent = envContent.replace(
+        passwordHashRegex,
+        `AUTH_PASSWORD_HASH=${passwordHash}`,
+      );
     } else {
-      envContent += (envContent.endsWith('\n') ? '' : '\n') + `AUTH_PASSWORD_HASH=${passwordHash}\n`;
+      envContent +=
+        (envContent.endsWith("\n") ? "" : "\n") +
+        `AUTH_PASSWORD_HASH=${passwordHash}\n`;
     }
   }
 
@@ -205,7 +234,8 @@ export async function updateAuthCredentials(
     if (enabledRegex.test(envContent)) {
       envContent = envContent.replace(enabledRegex, `AUTH_ENABLED=${enabled}`);
     } else {
-      envContent += (envContent.endsWith('\n') ? '' : '\n') + `AUTH_ENABLED=${enabled}\n`;
+      envContent +=
+        (envContent.endsWith("\n") ? "" : "\n") + `AUTH_ENABLED=${enabled}\n`;
     }
   }
 
@@ -217,20 +247,24 @@ export async function updateAuthCredentials(
  * Set AUTH_SETUP_COMPLETED flag in .env
  */
 export function setSetupCompleted(): void {
-  const envPath = path.join(process.cwd(), '.env');
-  
+  const envPath = path.join(process.cwd(), ".env");
+
   // Read existing .env file
-  let envContent = '';
+  let envContent = "";
   if (fs.existsSync(envPath)) {
-    envContent = fs.readFileSync(envPath, 'utf8');
+    envContent = fs.readFileSync(envPath, "utf8");
   }
 
   // Update or add AUTH_SETUP_COMPLETED
   const setupCompletedRegex = /^AUTH_SETUP_COMPLETED=.*$/m;
   if (setupCompletedRegex.test(envContent)) {
-    envContent = envContent.replace(setupCompletedRegex, 'AUTH_SETUP_COMPLETED=true');
+    envContent = envContent.replace(
+      setupCompletedRegex,
+      "AUTH_SETUP_COMPLETED=true",
+    );
   } else {
-    envContent += (envContent.endsWith('\n') ? '' : '\n') + 'AUTH_SETUP_COMPLETED=true\n';
+    envContent +=
+      (envContent.endsWith("\n") ? "" : "\n") + "AUTH_SETUP_COMPLETED=true\n";
   }
 
   // Write back to .env file
@@ -241,12 +275,12 @@ export function setSetupCompleted(): void {
  * Update AUTH_ENABLED flag in .env
  */
 export function updateAuthEnabled(enabled: boolean): void {
-  const envPath = path.join(process.cwd(), '.env');
-  
+  const envPath = path.join(process.cwd(), ".env");
+
   // Read existing .env file
-  let envContent = '';
+  let envContent = "";
   if (fs.existsSync(envPath)) {
-    envContent = fs.readFileSync(envPath, 'utf8');
+    envContent = fs.readFileSync(envPath, "utf8");
   }
 
   // Update or add AUTH_ENABLED
@@ -254,7 +288,8 @@ export function updateAuthEnabled(enabled: boolean): void {
   if (enabledRegex.test(envContent)) {
     envContent = envContent.replace(enabledRegex, `AUTH_ENABLED=${enabled}`);
   } else {
-    envContent += (envContent.endsWith('\n') ? '' : '\n') + `AUTH_ENABLED=${enabled}\n`;
+    envContent +=
+      (envContent.endsWith("\n") ? "" : "\n") + `AUTH_ENABLED=${enabled}\n`;
   }
 
   // Write back to .env file
@@ -267,24 +302,28 @@ export function updateAuthEnabled(enabled: boolean): void {
 export function updateSessionDuration(days: number): void {
   // Validate: between 1 and 365 days
   const validDays = Math.max(1, Math.min(365, Math.floor(days)));
-  
-  const envPath = path.join(process.cwd(), '.env');
-  
+
+  const envPath = path.join(process.cwd(), ".env");
+
   // Read existing .env file
-  let envContent = '';
+  let envContent = "";
   if (fs.existsSync(envPath)) {
-    envContent = fs.readFileSync(envPath, 'utf8');
+    envContent = fs.readFileSync(envPath, "utf8");
   }
 
   // Update or add AUTH_SESSION_DURATION_DAYS
   const sessionDurationRegex = /^AUTH_SESSION_DURATION_DAYS=.*$/m;
   if (sessionDurationRegex.test(envContent)) {
-    envContent = envContent.replace(sessionDurationRegex, `AUTH_SESSION_DURATION_DAYS=${validDays}`);
+    envContent = envContent.replace(
+      sessionDurationRegex,
+      `AUTH_SESSION_DURATION_DAYS=${validDays}`,
+    );
   } else {
-    envContent += (envContent.endsWith('\n') ? '' : '\n') + `AUTH_SESSION_DURATION_DAYS=${validDays}\n`;
+    envContent +=
+      (envContent.endsWith("\n") ? "" : "\n") +
+      `AUTH_SESSION_DURATION_DAYS=${validDays}\n`;
   }
 
   // Write back to .env file
   fs.writeFileSync(envPath, envContent);
 }
-

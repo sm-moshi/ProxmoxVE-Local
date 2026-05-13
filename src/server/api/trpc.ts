@@ -70,7 +70,6 @@ export const createCallerFactory = t.createCallerFactory;
  */
 export const createTRPCRouter = t.router;
 
-
 /**
  * Public (unauthenticated) procedure
  *

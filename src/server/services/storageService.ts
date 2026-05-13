@@ -1,5 +1,5 @@
-import { getSSHExecutionService } from '../ssh-execution-service';
-import type { Server } from '~/types/server';
+import { getSSHExecutionService } from "../ssh-execution-service";
+import type { Server } from "~/types/server";
 
 export interface Storage {
   name: string;
@@ -24,22 +24,22 @@ class StorageService {
    */
   private parseStorageConfig(configContent: string): Storage[] {
     const storages: Storage[] = [];
-    const lines = configContent.split('\n');
-    
+    const lines = configContent.split("\n");
+
     let currentStorage: Partial<Storage> | null = null;
-    
+
     for (const rawLine of lines) {
       if (!rawLine) continue;
-      
+
       // Check if line is indented (has leading whitespace/tabs) BEFORE trimming
       const isIndented = /^[\s\t]/.test(rawLine);
       const line = rawLine.trim();
-      
+
       // Skip empty lines and comments
-      if (!line || line.startsWith('#')) {
+      if (!line || line.startsWith("#")) {
         continue;
       }
-      
+
       // Check if this is a storage definition line (format: "type: name")
       // Storage definitions are NOT indented
       if (!isIndented) {
@@ -49,7 +49,7 @@ class StorageService {
           if (currentStorage?.name) {
             storages.push(this.finalizeStorage(currentStorage));
           }
-          
+
           // Start new storage
           currentStorage = {
             type: storageMatch[1],
@@ -60,25 +60,26 @@ class StorageService {
           continue;
         }
       }
-      
+
       // Parse storage properties (indented lines - can be tabs or spaces)
       if (currentStorage && isIndented) {
         // Split on first whitespace (space or tab) to separate key and value
         const match = /^(\S+)\s+(.+)$/.exec(line);
-        
+
         if (match?.[1] && match[2]) {
           const key = match[1];
           const value = match[2].trim();
-          
+
           switch (key) {
-            case 'content':
+            case "content":
               // Content can be comma-separated: "images,rootdir" or "backup"
-              currentStorage.content = value.split(',').map(c => c.trim());
-              currentStorage.supportsBackup = currentStorage.content.includes('backup');
+              currentStorage.content = value.split(",").map((c) => c.trim());
+              currentStorage.supportsBackup =
+                currentStorage.content.includes("backup");
               break;
-            case 'nodes':
+            case "nodes":
               // Nodes can be comma-separated: "prox5" or "prox5,prox6"
-              currentStorage.nodes = value.split(',').map(n => n.trim());
+              currentStorage.nodes = value.split(",").map((n) => n.trim());
               break;
             default:
               // Store other properties
@@ -89,12 +90,12 @@ class StorageService {
         }
       }
     }
-    
+
     // Don't forget the last storage
     if (currentStorage?.name) {
       storages.push(this.finalizeStorage(currentStorage));
     }
-    
+
     return storages;
   }
 
@@ -109,9 +110,12 @@ class StorageService {
       supportsBackup: storage.supportsBackup ?? false,
       nodes: storage.nodes,
       ...Object.fromEntries(
-        Object.entries(storage).filter(([key]) => 
-          !['name', 'type', 'content', 'supportsBackup', 'nodes'].includes(key)
-        )
+        Object.entries(storage).filter(
+          ([key]) =>
+            !["name", "type", "content", "supportsBackup", "nodes"].includes(
+              key,
+            ),
+        ),
       ),
     };
   }
@@ -119,27 +123,30 @@ class StorageService {
   /**
    * Fetch storage configuration from server via SSH
    */
-  async fetchStoragesFromServer(server: Server, forceRefresh = false): Promise<Storage[]> {
+  async fetchStoragesFromServer(
+    server: Server,
+    forceRefresh = false,
+  ): Promise<Storage[]> {
     const serverId = server.id;
-    
+
     // Check cache first (unless force refresh)
     if (!forceRefresh && this.cache.has(serverId)) {
       const cached = this.cache.get(serverId)!;
       const age = Date.now() - cached.lastFetched.getTime();
-      
+
       if (age < this.CACHE_TTL_MS) {
         return cached.storages;
       }
     }
-    
+
     // Fetch from server
     const sshService = getSSHExecutionService();
-    let configContent = '';
-    
+    let configContent = "";
+
     await new Promise<void>((resolve, reject) => {
       void sshService.executeCommand(
         server,
-        'cat /etc/pve/storage.cfg',
+        "cat /etc/pve/storage.cfg",
         (data: string) => {
           configContent += data;
         },
@@ -152,17 +159,17 @@ class StorageService {
           } else {
             reject(new Error(`Command failed with exit code ${exitCode}`));
           }
-        }
+        },
       );
     });
-    
+
     // Parse and cache
     const storages = this.parseStorageConfig(configContent);
     this.cache.set(serverId, {
       storages,
       lastFetched: new Date(),
     });
-    
+
     return storages;
   }
 
@@ -176,19 +183,25 @@ class StorageService {
   /**
    * Get only backup-capable storages
    */
-  async getBackupStorages(server: Server, forceRefresh = false): Promise<Storage[]> {
+  async getBackupStorages(
+    server: Server,
+    forceRefresh = false,
+  ): Promise<Storage[]> {
     const allStorages = await this.getStorages(server, forceRefresh);
-    return allStorages.filter(s => s.supportsBackup);
+    return allStorages.filter((s) => s.supportsBackup);
   }
 
   /**
    * Get PBS storage information (IP and datastore) from storage config
    */
-  getPBSStorageInfo(storage: Storage): { pbs_ip: string | null; pbs_datastore: string | null } {
-    if (storage.type !== 'pbs') {
+  getPBSStorageInfo(storage: Storage): {
+    pbs_ip: string | null;
+    pbs_datastore: string | null;
+  } {
+    if (storage.type !== "pbs") {
       return { pbs_ip: null, pbs_datastore: null };
     }
-    
+
     return {
       pbs_ip: (storage as any).server ?? null,
       pbs_datastore: (storage as any).datastore ?? null,
@@ -217,4 +230,3 @@ export function getStorageService(): StorageService {
   storageServiceInstance ??= new StorageService();
   return storageServiceInstance;
 }
-

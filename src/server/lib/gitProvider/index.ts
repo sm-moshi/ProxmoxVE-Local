@@ -19,10 +19,18 @@ export function getGitProvider(repoUrl: string): GitProvider {
   return providers[getRepoProvider(repoUrl)]!;
 }
 
-export async function listDirectory(repoUrl: string, path: string, branch: string): Promise<DirEntry[]> {
+export async function listDirectory(
+  repoUrl: string,
+  path: string,
+  branch: string,
+): Promise<DirEntry[]> {
   return getGitProvider(repoUrl).listDirectory(repoUrl, path, branch);
 }
 
-export async function downloadRawFile(repoUrl: string, filePath: string, branch: string): Promise<string> {
+export async function downloadRawFile(
+  repoUrl: string,
+  filePath: string,
+  branch: string,
+): Promise<string> {
   return getGitProvider(repoUrl).downloadRawFile(repoUrl, filePath, branch);
 }

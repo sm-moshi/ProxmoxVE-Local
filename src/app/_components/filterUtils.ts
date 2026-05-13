@@ -12,33 +12,38 @@ export function getDefaultFilters(): FilterState {
     selectedRepositories: [],
     sortBy: "name",
     sortOrder: "asc",
+    quickFilter: "all",
+    selectedCategory: null,
   };
 }
 
 /**
  * Merges saved filters with defaults, ensuring all FilterState properties exist.
  * This prevents crashes when loading old saved filters that are missing new properties.
- * 
+ *
  * @param savedFilters - Partial or undefined saved filters from storage
  * @returns Complete FilterState with all properties guaranteed to exist
  */
 export function mergeFiltersWithDefaults(
-  savedFilters: Partial<FilterState> | undefined
+  savedFilters: Partial<FilterState> | undefined,
 ): FilterState {
   const defaults = getDefaultFilters();
-  
+
   if (!savedFilters) {
     return defaults;
   }
-  
+
   // Merge saved filters with defaults, ensuring all properties exist
   return {
     searchQuery: savedFilters.searchQuery ?? defaults.searchQuery,
     showUpdatable: savedFilters.showUpdatable ?? defaults.showUpdatable,
     selectedTypes: savedFilters.selectedTypes ?? defaults.selectedTypes,
-    selectedRepositories: savedFilters.selectedRepositories ?? defaults.selectedRepositories,
+    selectedRepositories:
+      savedFilters.selectedRepositories ?? defaults.selectedRepositories,
     sortBy: savedFilters.sortBy ?? defaults.sortBy,
     sortOrder: savedFilters.sortOrder ?? defaults.sortOrder,
+    quickFilter: savedFilters.quickFilter ?? defaults.quickFilter,
+    selectedCategory:
+      savedFilters.selectedCategory ?? defaults.selectedCategory,
   };
 }
-

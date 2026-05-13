@@ -1,15 +1,15 @@
-import { redactObject } from './redact';
+import { redactObject } from "./redact";
 
-type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+type LogLevel = "debug" | "info" | "warn" | "error";
 
 const LOG_LEVELS: Record<LogLevel, number> = {
   debug: 10,
   info: 20,
   warn: 30,
-  error: 40
+  error: 40,
 };
 
-const envLevel = (process.env.LOG_LEVEL as LogLevel) || 'info';
+const envLevel = (process.env.LOG_LEVEL as LogLevel) || "info";
 const currentLevel = LOG_LEVELS[envLevel] ?? LOG_LEVELS.info;
 
 function safeMeta(meta?: unknown): unknown {
@@ -21,13 +21,15 @@ function safeMeta(meta?: unknown): unknown {
   }
 }
 
-function safeError(err: unknown): { name?: string; code?: string; stack?: string } | undefined {
+function safeError(
+  err: unknown,
+): { name?: string; code?: string; stack?: string } | undefined {
   if (!err) return undefined;
   if (err instanceof Error) {
     return {
       name: err.name,
       code: (err as any).code,
-      stack: formatStack(err.stack)
+      stack: formatStack(err.stack),
     };
   }
   return undefined;
@@ -35,8 +37,8 @@ function safeError(err: unknown): { name?: string; code?: string; stack?: string
 
 function formatStack(stack?: string): string | undefined {
   if (!stack) return undefined;
-  const lines = stack.split('\n').slice(0, 10);
-  return lines.join('\n');
+  const lines = stack.split("\n").slice(0, 10);
+  return lines.join("\n");
 }
 
 function log(level: LogLevel, message: string, meta?: unknown, err?: unknown) {
@@ -52,9 +54,9 @@ function log(level: LogLevel, message: string, meta?: unknown, err?: unknown) {
   if (safeErr) payload.err = safeErr;
 
   const line = JSON.stringify(payload);
-  if (level === 'error') {
+  if (level === "error") {
     console.error(line);
-  } else if (level === 'warn') {
+  } else if (level === "warn") {
     console.warn(line);
   } else {
     console.log(line);
@@ -63,19 +65,17 @@ function log(level: LogLevel, message: string, meta?: unknown, err?: unknown) {
 
 export const logger = {
   debug(message: string, meta?: unknown) {
-    log('debug', message, meta);
+    log("debug", message, meta);
   },
   info(message: string, meta?: unknown) {
-    log('info', message, meta);
+    log("info", message, meta);
   },
   warn(message: string, meta?: unknown) {
-    log('warn', message, meta);
+    log("warn", message, meta);
   },
   error(message: string, meta?: unknown, err?: unknown) {
-    log('error', message, meta, err);
-  }
+    log("error", message, meta, err);
+  },
 };
 
 export default logger;
-
-

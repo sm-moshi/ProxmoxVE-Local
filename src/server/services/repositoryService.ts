@@ -1,24 +1,30 @@
-import { prisma } from '../db';
-import { isValidRepositoryUrl, REPO_URL_ERROR_MESSAGE } from '../lib/repositoryUrlValidation';
+import { prisma } from "../db";
+import {
+  isValidRepositoryUrl,
+  REPO_URL_ERROR_MESSAGE,
+} from "../lib/repositoryUrlValidation";
+import { logger } from "../logging/logger";
 
 export class RepositoryService {
   /**
    * Initialize default repositories if they don't exist
    */
   async initializeDefaultRepositories(): Promise<void> {
-    const mainRepoUrl = 'https://github.com/community-scripts/ProxmoxVE';
-    const devRepoUrl = 'https://github.com/community-scripts/ProxmoxVED';
+    const mainRepoUrl = "https://github.com/community-scripts/ProxmoxVE";
+    const devRepoUrl = "https://github.com/community-scripts/ProxmoxVED";
 
     // Check if repositories already exist
     const existingRepos = await prisma.repository.findMany({
       where: {
         url: {
-          in: [mainRepoUrl, devRepoUrl]
-        }
-      }
+          in: [mainRepoUrl, devRepoUrl],
+        },
+      },
     });
 
-    const existingUrls = new Set(existingRepos.map((r: { url: string }) => r.url));
+    const existingUrls = new Set(
+      existingRepos.map((r: { url: string }) => r.url),
+    );
 
     // Create main repo if it doesn't exist
     if (!existingUrls.has(mainRepoUrl)) {
@@ -28,10 +34,10 @@ export class RepositoryService {
           enabled: true,
           is_default: true,
           is_removable: false,
-          priority: 1
-        }
+          priority: 1,
+        },
       });
-      console.log('Initialized main repository:', mainRepoUrl);
+      logger.info("Initialized main repository:", { value: mainRepoUrl });
     }
 
     // Create dev repo if it doesn't exist
@@ -42,10 +48,10 @@ export class RepositoryService {
           enabled: false,
           is_default: true,
           is_removable: false,
-          priority: 2
-        }
+          priority: 2,
+        },
       });
-      console.log('Initialized dev repository:', devRepoUrl);
+      logger.info("Initialized dev repository:", { value: devRepoUrl });
     }
   }
 
@@ -54,10 +60,7 @@ export class RepositoryService {
    */
   async getAllRepositories() {
     return await prisma.repository.findMany({
-      orderBy: [
-        { priority: 'asc' },
-        { created_at: 'asc' }
-      ]
+      orderBy: [{ priority: "asc" }, { created_at: "asc" }],
     });
   }
 
@@ -67,12 +70,9 @@ export class RepositoryService {
   async getEnabledRepositories() {
     return await prisma.repository.findMany({
       where: {
-        enabled: true
+        enabled: true,
       },
-      orderBy: [
-        { priority: 'asc' },
-        { created_at: 'asc' }
-      ]
+      orderBy: [{ priority: "asc" }, { created_at: "asc" }],
     });
   }
 
@@ -81,7 +81,7 @@ export class RepositoryService {
    */
   async getRepositoryByUrl(url: string) {
     return await prisma.repository.findUnique({
-      where: { url }
+      where: { url },
     });
   }
 
@@ -100,14 +100,14 @@ export class RepositoryService {
     // Check for duplicates
     const existing = await this.getRepositoryByUrl(data.url);
     if (existing) {
-      throw new Error('Repository already exists');
+      throw new Error("Repository already exists");
     }
 
     // Get max priority for user-added repos
     const maxPriority = await prisma.repository.aggregate({
       _max: {
-        priority: true
-      }
+        priority: true,
+      },
     });
 
     return await prisma.repository.create({
@@ -116,19 +116,22 @@ export class RepositoryService {
         enabled: data.enabled ?? true,
         is_default: false,
         is_removable: true,
-        priority: data.priority ?? (maxPriority._max.priority ?? 0) + 1
-      }
+        priority: data.priority ?? (maxPriority._max.priority ?? 0) + 1,
+      },
     });
   }
 
   /**
    * Update repository
    */
-  async updateRepository(id: number, data: {
-    enabled?: boolean;
-    url?: string;
-    priority?: number;
-  }) {
+  async updateRepository(
+    id: number,
+    data: {
+      enabled?: boolean;
+      url?: string;
+      priority?: number;
+    },
+  ) {
     if (data.url) {
       if (!isValidRepositoryUrl(data.url)) {
         throw new Error(REPO_URL_ERROR_MESSAGE);
@@ -138,17 +141,17 @@ export class RepositoryService {
       const existing = await prisma.repository.findFirst({
         where: {
           url: data.url,
-          id: { not: id }
-        }
+          id: { not: id },
+        },
       });
       if (existing) {
-        throw new Error('Repository URL already exists');
+        throw new Error("Repository URL already exists");
       }
     }
 
     return await prisma.repository.update({
       where: { id },
-      data
+      data,
     });
   }
 
@@ -157,15 +160,15 @@ export class RepositoryService {
    */
   async deleteRepository(id: number) {
     const repo = await prisma.repository.findUnique({
-      where: { id }
+      where: { id },
     });
 
     if (!repo) {
-      throw new Error('Repository not found');
+      throw new Error("Repository not found");
     }
 
     if (!repo.is_removable) {
-      throw new Error('Cannot delete default repository');
+      throw new Error("Cannot delete default repository");
     }
 
     // Delete associated JSON files
@@ -173,7 +176,7 @@ export class RepositoryService {
 
     // Delete repository
     await prisma.repository.delete({
-      where: { id }
+      where: { id },
     });
 
     return { success: true };
@@ -183,36 +186,38 @@ export class RepositoryService {
    * Delete all JSON files associated with a repository
    */
   private async deleteRepositoryJsonFiles(repoUrl: string): Promise<void> {
-    const { readdir, unlink, readFile } = await import('fs/promises');
-    const { join } = await import('path');
+    const { readdir, unlink, readFile } = await import("fs/promises");
+    const { join } = await import("path");
 
-    const jsonDirectory = join(process.cwd(), 'scripts', 'json');
+    const jsonDirectory = join(process.cwd(), "scripts", "json");
 
     try {
       const files = await readdir(jsonDirectory);
-      
+
       for (const file of files) {
-        if (!file.endsWith('.json')) continue;
+        if (!file.endsWith(".json")) continue;
 
         try {
           const filePath = join(jsonDirectory, file);
-          const content = await readFile(filePath, 'utf-8');
+          const content = await readFile(filePath, "utf-8");
           const script = JSON.parse(content);
 
           // If script has repository_url matching the repo, delete it
           if (script.repository_url === repoUrl) {
             await unlink(filePath);
-            console.log(`Deleted JSON file: ${file} (from repository: ${repoUrl})`);
+            logger.info(
+              `Deleted JSON file: ${file} (from repository: ${repoUrl})`,
+            );
           }
         } catch (error) {
           // Skip files that can't be read or parsed
-          console.error(`Error processing file ${file}:`, error);
+          logger.error(`Error processing file ${file}:`, undefined, error);
         }
       }
     } catch (error) {
       // Directory might not exist, which is fine
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error('Error deleting repository JSON files:', error);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger.error("Error deleting repository JSON files:", undefined, error);
       }
     }
   }
@@ -220,4 +225,3 @@ export class RepositoryService {
 
 // Singleton instance
 export const repositoryService = new RepositoryService();
-

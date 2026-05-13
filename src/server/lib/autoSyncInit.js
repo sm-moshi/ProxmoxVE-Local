@@ -1,5 +1,5 @@
-import { AutoSyncService } from '../services/autoSyncService.js';
-import { repositoryService } from '../services/repositoryService.js';
+import { AutoSyncService } from "../services/autoSyncService.js";
+import { repositoryService } from "../services/repositoryService.js";
 
 /** @type {AutoSyncService | null} */
 let autoSyncService = null;
@@ -11,16 +11,18 @@ let isInitialized = false;
  */
 export async function initializeRepositories() {
   try {
-    console.log('Initializing default repositories...');
+    console.log("Initializing default repositories...");
     if (repositoryService && repositoryService.initializeDefaultRepositories) {
       await repositoryService.initializeDefaultRepositories();
-      console.log('Default repositories initialized successfully');
+      console.log("Default repositories initialized successfully");
     } else {
-      console.warn('Repository service not available, skipping repository initialization');
+      console.warn(
+        "Repository service not available, skipping repository initialization",
+      );
     }
   } catch (error) {
-    console.error('Failed to initialize repositories:', error);
-    console.error('Error stack:', error.stack);
+    console.error("Failed to initialize repositories:", error);
+    console.error("Error stack:", error.stack);
   }
 }
 
@@ -29,32 +31,32 @@ export async function initializeRepositories() {
  */
 export function initializeAutoSync() {
   if (isInitialized) {
-    console.log('Auto-sync service already initialized, skipping...');
+    console.log("Auto-sync service already initialized, skipping...");
     return;
   }
-  
+
   try {
-    console.log('Initializing auto-sync service...');
+    console.log("Initializing auto-sync service...");
     autoSyncService = new AutoSyncService();
     isInitialized = true;
-    console.log('AutoSyncService instance created');
-    
+    console.log("AutoSyncService instance created");
+
     // Load settings and schedule if enabled
     const settings = autoSyncService.loadSettings();
-    console.log('Settings loaded:', settings);
-    
+    console.log("Settings loaded:", settings);
+
     if (settings.autoSyncEnabled) {
-      console.log('Auto-sync is enabled, scheduling cron job...');
+      console.log("Auto-sync is enabled, scheduling cron job...");
       autoSyncService.scheduleAutoSync();
-      console.log('Cron job scheduled');
+      console.log("Cron job scheduled");
     } else {
-      console.log('Auto-sync is disabled');
+      console.log("Auto-sync is disabled");
     }
-    
-    console.log('Auto-sync service initialized successfully');
+
+    console.log("Auto-sync service initialized successfully");
   } catch (error) {
-    console.error('Failed to initialize auto-sync service:', error);
-    console.error('Error stack:', error.stack);
+    console.error("Failed to initialize auto-sync service:", error);
+    console.error("Error stack:", error.stack);
   }
 }
 
@@ -64,14 +66,14 @@ export function initializeAutoSync() {
 export function stopAutoSync() {
   try {
     if (autoSyncService) {
-      console.log('Stopping auto-sync service...');
+      console.log("Stopping auto-sync service...");
       autoSyncService.stopAutoSync();
       autoSyncService = null;
       isInitialized = false;
-      console.log('Auto-sync service stopped');
+      console.log("Auto-sync service stopped");
     }
   } catch (error) {
-    console.error('Error stopping auto-sync service:', error);
+    console.error("Error stopping auto-sync service:", error);
   }
 }
 
@@ -99,7 +101,7 @@ export function setupGracefulShutdown() {
     process.exit(0);
   };
 
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGUSR2', () => shutdown('SIGUSR2')); // For nodemon
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGUSR2", () => shutdown("SIGUSR2")); // For nodemon
 }

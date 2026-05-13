@@ -5,6 +5,8 @@ import { versionRouter } from "~/server/api/routers/version";
 import { backupsRouter } from "~/server/api/routers/backups";
 import { pbsCredentialsRouter } from "~/server/api/routers/pbsCredentials";
 import { repositoriesRouter } from "~/server/api/routers/repositories";
+import { scriptNotesRouter } from "~/server/api/routers/scriptNotes";
+import { serverPresetsRouter } from "~/server/api/routers/serverPresets";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 
 /**
@@ -20,6 +22,8 @@ export const appRouter = createTRPCRouter({
   backups: backupsRouter,
   pbsCredentials: pbsCredentialsRouter,
   repositories: repositoriesRouter,
+  scriptNotes: scriptNotesRouter,
+  serverPresets: serverPresetsRouter,
 });
 
 // export type definition of API

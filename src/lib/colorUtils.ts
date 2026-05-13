@@ -2,9 +2,9 @@
  * Calculate the appropriate text color (black or white) for a given background color
  * to ensure optimal readability based on luminance
  */
-export function getContrastColor(hexColor: string): 'black' | 'white' {
-  if (!hexColor?.length || hexColor.length !== 7 || !hexColor.startsWith('#')) {
-    return 'black'; // Default to black for invalid colors
+export function getContrastColor(hexColor: string): "black" | "white" {
+  if (!hexColor?.length || hexColor.length !== 7 || !hexColor.startsWith("#")) {
+    return "black"; // Default to black for invalid colors
   }
 
   // Remove the # and convert to RGB
@@ -17,7 +17,7 @@ export function getContrastColor(hexColor: string): 'black' | 'white' {
   const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 
   // Return black for light backgrounds, white for dark backgrounds
-  return luminance > 0.5 ? 'black' : 'white';
+  return luminance > 0.5 ? "black" : "white";
 }
 
 /**
@@ -31,5 +31,5 @@ export function isValidHexColor(color: string): boolean {
  * Get a default color for servers that don't have one set
  */
 export function getDefaultServerColor(): string {
-  return '#3b82f6'; // Blue-500 from Tailwind
+  return "#3b82f6"; // Blue-500 from Tailwind
 }

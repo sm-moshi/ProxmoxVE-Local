@@ -4,7 +4,7 @@ export interface Server {
   ip: string;
   user: string;
   password?: string;
-  auth_type?: 'password' | 'key';
+  auth_type?: "password" | "key";
   ssh_key?: string;
   ssh_key_passphrase?: string;
   ssh_key_path?: string;
@@ -20,7 +20,7 @@ export interface CreateServerData {
   ip: string;
   user: string;
   password?: string;
-  auth_type?: 'password' | 'key';
+  auth_type?: "password" | "key";
   ssh_key?: string;
   ssh_key_passphrase?: string;
   ssh_key_path?: string;
@@ -32,4 +32,3 @@ export interface CreateServerData {
 export interface UpdateServerData extends CreateServerData {
   id: number;
 }
-

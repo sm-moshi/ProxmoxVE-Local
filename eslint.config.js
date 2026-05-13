@@ -5,12 +5,17 @@ import reactHooksPlugin from "eslint-plugin-react-hooks";
 
 export default tseslint.config(
   {
-    ignores: [".next", "next-env.d.ts", "postcss.config.js", "prettier.config.js"],
+    ignores: [
+      ".next",
+      "next-env.d.ts",
+      "postcss.config.js",
+      "prettier.config.js",
+    ],
   },
   {
     plugins: {
       "@next/next": eslintPluginNext,
-      "react": reactPlugin,
+      react: reactPlugin,
       "react-hooks": reactHooksPlugin,
     },
     rules: {

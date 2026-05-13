@@ -440,8 +440,8 @@ export function ServerForm({
             )}
             <p className="text-muted-foreground mt-1 text-xs">
               SSH key is recommended when possible. Special characters (e.g.{" "}
-              <code className="rounded bg-muted px-0.5">{"{ } $ \" '"}</code>) are
-              supported.
+              <code className="bg-muted rounded px-0.5">{"{ } $ \" '"}</code>)
+              are supported.
             </p>
           </div>
         )}

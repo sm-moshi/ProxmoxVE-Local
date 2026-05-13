@@ -1,6 +1,12 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+} from "react";
 import { api } from "~/trpc/react";
 import { ScriptCard } from "./ScriptCard";
 import { ScriptCardList } from "./ScriptCardList";
@@ -14,19 +20,26 @@ import { RefreshCw } from "lucide-react";
 import type { ScriptCard as ScriptCardType } from "~/types/script";
 import type { Server } from "~/types/server";
 import { getDefaultFilters, mergeFiltersWithDefaults } from "./filterUtils";
+import { useShell } from "./ShellContext";
 
-interface DownloadedScriptsTabProps {
-  onInstallScript?: (
-    scriptPath: string,
-    scriptName: string,
-    mode?: "local" | "ssh",
-    server?: Server,
-  ) => void;
-}
+type InstalledContainerShell = {
+  id: number;
+  script_name: string;
+  container_id: string;
+  status: string;
+  is_vm?: boolean | null;
+  server_id?: number | null;
+  server_name?: string | null;
+  server_ip?: string | null;
+  server_user?: string | null;
+  server_password?: string | null;
+  server_auth_type?: Server["auth_type"] | null;
+  server_ssh_key?: string | null;
+  server_ssh_key_passphrase?: string | null;
+  server_ssh_port?: number | null;
+};
 
-export function DownloadedScriptsTab({
-  onInstallScript,
-}: DownloadedScriptsTabProps) {
+export function DownloadedScriptsTab() {
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -34,6 +47,8 @@ export function DownloadedScriptsTab({
   const [filters, setFilters] = useState<FilterState>(getDefaultFilters());
   const [saveFiltersEnabled, setSaveFiltersEnabled] = useState(false);
   const [isLoadingFilters, setIsLoadingFilters] = useState(true);
+  const filtersInitRef = useRef(false);
+  const viewModeInitRef = useRef(false);
   const [updateAllConfirmOpen, setUpdateAllConfirmOpen] = useState(false);
   const [updateResult, setUpdateResult] = useState<{
     successCount: number;
@@ -53,35 +68,37 @@ export function DownloadedScriptsTab({
     data: localScriptsData,
     isLoading: localLoading,
     error: localError,
+    refetch: refetchLocal,
   } = api.scripts.getAllDownloadedScripts.useQuery();
   const { data: scriptData } = api.scripts.getScriptBySlug.useQuery(
     { slug: selectedSlug ?? "" },
     { enabled: !!selectedSlug },
   );
 
-  const loadMultipleScriptsMutation = api.scripts.loadMultipleScripts.useMutation({
-    onSuccess: (data) => {
-      void utils.scripts.getAllDownloadedScripts.invalidate();
-      void utils.scripts.getScriptCardsWithCategories.invalidate();
-      setUpdateResult({
-        successCount: data.successful?.length ?? 0,
-        failCount: data.failed?.length ?? 0,
-        failed: (data.failed ?? []).map((f) => ({
-          slug: f.slug,
-          error: f.error ?? "Unknown error",
-        })),
-      });
-      setTimeout(() => setUpdateResult(null), 8000);
-    },
-    onError: (error) => {
-      setUpdateResult({
-        successCount: 0,
-        failCount: 1,
-        failed: [{ slug: "Request failed", error: error.message }],
-      });
-      setTimeout(() => setUpdateResult(null), 8000);
-    },
-  });
+  const loadMultipleScriptsMutation =
+    api.scripts.loadMultipleScripts.useMutation({
+      onSuccess: (data) => {
+        void utils.scripts.getAllDownloadedScripts.invalidate();
+        void utils.scripts.getScriptCardsWithCategories.invalidate();
+        setUpdateResult({
+          successCount: data.successful?.length ?? 0,
+          failCount: data.failed?.length ?? 0,
+          failed: (data.failed ?? []).map((f) => ({
+            slug: f.slug,
+            error: f.error ?? "Unknown error",
+          })),
+        });
+        setTimeout(() => setUpdateResult(null), 8000);
+      },
+      onError: (error) => {
+        setUpdateResult({
+          successCount: 0,
+          failCount: 1,
+          failed: [{ slug: "Request failed", error: error.message }],
+        });
+        setTimeout(() => setUpdateResult(null), 8000);
+      },
+    });
 
   // Load SAVE_FILTER setting, saved filters, and view mode on component mount
   useEffect(() => {
@@ -135,6 +152,11 @@ export function DownloadedScriptsTab({
   // Save filters when they change (if SAVE_FILTER is enabled)
   useEffect(() => {
     if (!saveFiltersEnabled || isLoadingFilters) return;
+    // Skip the first fire after load — values haven't changed yet
+    if (!filtersInitRef.current) {
+      filtersInitRef.current = true;
+      return;
+    }
 
     const saveFilters = async () => {
       try {
@@ -158,6 +180,11 @@ export function DownloadedScriptsTab({
   // Save view mode when it changes
   useEffect(() => {
     if (isLoadingFilters) return;
+    // Skip the first fire after load — value hasn't changed yet
+    if (!viewModeInitRef.current) {
+      viewModeInitRef.current = true;
+      return;
+    }
 
     const saveViewMode = async () => {
       try {
@@ -336,13 +363,11 @@ export function DownloadedScriptsTab({
       scripts = scripts.filter((script) => {
         if (!script) return false;
         const scriptType = (script.type ?? "").toLowerCase();
-
-        // Map non-standard types to standard categories
-        const mappedType = scriptType === "turnkey" ? "ct" : scriptType;
-
-        return filters.selectedTypes.some(
-          (type) => type.toLowerCase() === mappedType,
-        );
+        return filters.selectedTypes.some((type) => {
+          const t = type.toLowerCase();
+          if (t === "ct") return scriptType === "ct" || scriptType === "lxc";
+          return scriptType === t;
+        });
       });
     }
 
@@ -373,6 +398,21 @@ export function DownloadedScriptsTab({
             compareValue = 1;
           } else {
             // Both have no dates, fallback to name comparison
+            compareValue = (a.name ?? "").localeCompare(b.name ?? "");
+          }
+          break;
+        case "updated":
+          // Sort by date_created as a proxy (JSON doesn't have updated date)
+          // For downloaded scripts, treat more recent date_created as "recently updated"
+          const aUpdated = a?.date_created ?? "";
+          const bUpdated = b?.date_created ?? "";
+          if (aUpdated && bUpdated) {
+            compareValue = aUpdated.localeCompare(bUpdated);
+          } else if (aUpdated && !bUpdated) {
+            compareValue = -1;
+          } else if (!aUpdated && bUpdated) {
+            compareValue = 1;
+          } else {
             compareValue = (a.name ?? "").localeCompare(b.name ?? "");
           }
           break;
@@ -431,6 +471,64 @@ export function DownloadedScriptsTab({
     setIsModalOpen(false);
     setSelectedSlug(null);
   };
+
+  const { open: openShell } = useShell();
+  const { data: installedScriptsData } =
+    api.installedScripts.getAllInstalledScripts.useQuery();
+
+  const normalizeSlug = (s?: string): string =>
+    (s ?? "")
+      .toLowerCase()
+      .replace(/\.(sh|bash|py|js|ts)$/i, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+  const installedContainerMap = useMemo((): Map<
+    string,
+    InstalledContainerShell
+  > => {
+    const map = new Map<string, InstalledContainerShell>();
+    const scripts = (installedScriptsData?.scripts ??
+      []) as InstalledContainerShell[];
+    for (const s of scripts) {
+      if (!s.container_id || s.status === "failed") continue;
+      const key = normalizeSlug(s.script_name);
+      if (!map.has(key)) map.set(key, s);
+    }
+    return map;
+  }, [installedScriptsData]);
+
+  const handleShellClick = useCallback(
+    (script: ScriptCardType) => {
+      const container = installedContainerMap.get(normalizeSlug(script.slug));
+      if (!container) return;
+      const server =
+        container.server_id && container.server_user
+          ? {
+              id: container.server_id,
+              name: container.server_name ?? "",
+              ip: container.server_ip ?? "",
+              user: container.server_user,
+              password: container.server_password ?? undefined,
+              auth_type: container.server_auth_type ?? "password",
+              ssh_key: container.server_ssh_key ?? undefined,
+              ssh_key_passphrase:
+                container.server_ssh_key_passphrase ?? undefined,
+              ssh_port: container.server_ssh_port ?? 22,
+              created_at: null,
+              updated_at: null,
+            }
+          : undefined;
+      openShell({
+        containerId: container.container_id,
+        containerName: container.script_name,
+        server,
+        containerType: container.is_vm ? "vm" : "lxc",
+      });
+    },
+
+    [installedContainerMap, openShell],
+  );
 
   const handleUpdateAllClick = () => {
     setUpdateResult(null);
@@ -542,6 +640,19 @@ export function DownloadedScriptsTab({
           {/* Update all downloaded scripts */}
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <Button
+              onClick={() => {
+                void refetch();
+                void refetchLocal();
+              }}
+              variant="outline"
+              size="default"
+              className="flex items-center gap-2"
+              title="Refresh downloaded scripts list"
+            >
+              <RefreshCw className="h-4 w-4" />
+              <span>Refresh</span>
+            </Button>
+            <Button
               onClick={handleUpdateAllClick}
               disabled={loadMultipleScriptsMutation.isPending}
               variant="secondary"
@@ -567,11 +678,17 @@ export function DownloadedScriptsTab({
                   ? `, ${updateResult.failCount} failed`
                   : ""}
                 .
-                {updateResult.failCount > 0 && updateResult.failed.length > 0 && (
-                  <span className="ml-1" title={updateResult.failed.map((f) => `${f.slug}: ${f.error}`).join("\n")}>
-                    (hover for details)
-                  </span>
-                )}
+                {updateResult.failCount > 0 &&
+                  updateResult.failed.length > 0 && (
+                    <span
+                      className="ml-1"
+                      title={updateResult.failed
+                        .map((f) => `${f.slug}: ${f.error}`)
+                        .join("\n")}
+                    >
+                      (hover for details)
+                    </span>
+                  )}
               </span>
             )}
           </div>
@@ -657,6 +774,11 @@ export function DownloadedScriptsTab({
                     key={uniqueKey}
                     script={script}
                     onClick={handleCardClick}
+                    onShell={
+                      installedContainerMap.has(normalizeSlug(script.slug))
+                        ? () => handleShellClick(script)
+                        : undefined
+                    }
                   />
                 );
               })}
@@ -677,6 +799,11 @@ export function DownloadedScriptsTab({
                     key={uniqueKey}
                     script={script}
                     onClick={handleCardClick}
+                    onShell={
+                      installedContainerMap.has(normalizeSlug(script.slug))
+                        ? () => handleShellClick(script)
+                        : undefined
+                    }
                   />
                 );
               })}
@@ -687,7 +814,8 @@ export function DownloadedScriptsTab({
             script={scriptData?.success ? scriptData.script : null}
             isOpen={isModalOpen}
             onClose={handleCloseModal}
-            onInstallScript={onInstallScript}
+            orderedSlugs={filteredScripts.map((s) => s.slug)}
+            onSelectSlug={(slug) => setSelectedSlug(slug)}
           />
 
           <ConfirmationModal

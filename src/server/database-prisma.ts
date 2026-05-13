@@ -1,9 +1,9 @@
-import { prisma } from './db';
-import { join } from 'path';
-import { writeFileSync, unlinkSync, chmodSync, mkdirSync } from 'fs';
-import { existsSync } from 'fs';
-import type { CreateServerData } from '../types/server';
-import type { Prisma } from '../../prisma/generated/prisma/client';
+import { prisma } from "./db";
+import { join } from "path";
+import { writeFileSync, unlinkSync, chmodSync, mkdirSync } from "fs";
+import { existsSync } from "fs";
+import type { CreateServerData } from "../types/server";
+import type { Prisma } from "../../prisma/generated/prisma/client";
 
 // Type definitions based on Prisma schema
 type Server = {
@@ -98,13 +98,16 @@ type PBSStorageCredential = {
   storage_name: string;
   pbs_ip: string;
   pbs_datastore: string;
+  pbs_username: string;
   pbs_password: string;
   pbs_fingerprint: string;
   created_at: Date;
   updated_at: Date;
 };
 
-type LXCConfigInput = Partial<Omit<LXCConfig, 'id' | 'installed_script_id' | 'created_at' | 'updated_at'>>;
+type LXCConfigInput = Partial<
+  Omit<LXCConfig, "id" | "installed_script_id" | "created_at" | "updated_at">
+>;
 
 class DatabaseServicePrisma {
   constructor() {
@@ -113,7 +116,7 @@ class DatabaseServicePrisma {
 
   init(): void {
     // Ensure data/ssh-keys directory exists (recursive to create parent dirs)
-    const sshKeysDir = join(process.cwd(), 'data', 'ssh-keys');
+    const sshKeysDir = join(process.cwd(), "data", "ssh-keys");
     if (!existsSync(sshKeysDir)) {
       mkdirSync(sshKeysDir, { recursive: true, mode: 0o700 });
     }
@@ -121,91 +124,124 @@ class DatabaseServicePrisma {
 
   // Server CRUD operations
   async createServer(serverData: CreateServerData): Promise<Server> {
-    const { name, ip, user, password, auth_type, ssh_key, ssh_key_passphrase, ssh_port, color, key_generated } = serverData;
-    const normalizedPort = ssh_port !== undefined ? parseInt(String(ssh_port), 10) : 22;
-    
+    const {
+      name,
+      ip,
+      user,
+      password,
+      auth_type,
+      ssh_key,
+      ssh_key_passphrase,
+      ssh_port,
+      color,
+      key_generated,
+    } = serverData;
+    const normalizedPort =
+      ssh_port !== undefined ? parseInt(String(ssh_port), 10) : 22;
+
     let ssh_key_path: string | null = null;
-    
+
     // If using SSH key authentication, create persistent key file
-    if (auth_type === 'key' && ssh_key) {
+    if (auth_type === "key" && ssh_key) {
       const serverId = await this.getNextServerId();
       ssh_key_path = this.createSSHKeyFile(serverId, ssh_key);
     }
-    
+
     const result = await prisma.server.create({
       data: {
         name,
         ip,
         user,
         password,
-        auth_type: auth_type ?? 'password',
+        auth_type: auth_type ?? "password",
         ssh_key,
         ssh_key_passphrase,
         ssh_port: Number.isNaN(normalizedPort) ? 22 : normalizedPort,
         ssh_key_path,
         key_generated: Boolean(key_generated),
         color,
-      }
+      },
     });
-    return result as Server;
+    return result;
   }
 
   async getAllServers(): Promise<Server[]> {
     const result = await prisma.server.findMany({
-      orderBy: { created_at: 'desc' }
+      orderBy: { created_at: "desc" },
     });
-    return result as Server[];
+    return result;
   }
 
   async getServerById(id: number): Promise<Server | null> {
     const result = await prisma.server.findUnique({
-      where: { id }
+      where: { id },
     });
-    return result as Server | null;
+    return result;
   }
 
-  async updateServer(id: number, serverData: CreateServerData): Promise<Server> {
-    const { name, ip, user, password, auth_type, ssh_key, ssh_key_passphrase, ssh_port, color, key_generated } = serverData;
-    const normalizedPort = ssh_port !== undefined ? parseInt(String(ssh_port), 10) : undefined;
-    
+  async updateServer(
+    id: number,
+    serverData: CreateServerData,
+  ): Promise<Server> {
+    const {
+      name,
+      ip,
+      user,
+      password,
+      auth_type,
+      ssh_key,
+      ssh_key_passphrase,
+      ssh_port,
+      color,
+      key_generated,
+    } = serverData;
+    const normalizedPort =
+      ssh_port !== undefined ? parseInt(String(ssh_port), 10) : undefined;
+
     // Get existing server to check for key changes
     const existingServer = await this.getServerById(id);
     let ssh_key_path = existingServer?.ssh_key_path ?? null;
-    
+
     // Handle SSH key changes
-    if (auth_type === 'key' && ssh_key) {
+    if (auth_type === "key" && ssh_key) {
       // Delete old key file if it exists
-      if (existingServer?.ssh_key_path && existsSync(existingServer.ssh_key_path)) {
+      if (
+        existingServer?.ssh_key_path &&
+        existsSync(existingServer.ssh_key_path)
+      ) {
         try {
           unlinkSync(existingServer.ssh_key_path);
           // Also delete public key file if it exists
-          const pubKeyPath = existingServer.ssh_key_path + '.pub';
+          const pubKeyPath = existingServer.ssh_key_path + ".pub";
           if (existsSync(pubKeyPath)) {
             unlinkSync(pubKeyPath);
           }
         } catch (error) {
-          console.warn('Failed to delete old SSH key file:', error);
+          console.warn("Failed to delete old SSH key file:", error);
         }
       }
-      
+
       // Create new key file
       ssh_key_path = this.createSSHKeyFile(id, ssh_key);
-    } else if (auth_type !== 'key') {
+    } else if (auth_type !== "key") {
       // If switching away from key auth, delete key files
-      if (existingServer?.ssh_key_path && existsSync(existingServer.ssh_key_path)) {
+      if (
+        existingServer?.ssh_key_path &&
+        existsSync(existingServer.ssh_key_path)
+      ) {
         try {
           unlinkSync(existingServer.ssh_key_path);
-          const pubKeyPath = existingServer.ssh_key_path + '.pub';
+          const pubKeyPath = existingServer.ssh_key_path + ".pub";
           if (existsSync(pubKeyPath)) {
             unlinkSync(pubKeyPath);
           }
         } catch (error) {
-          console.warn('Failed to delete SSH key file:', error);
+          console.warn("Failed to delete SSH key file:", error);
         }
       }
       ssh_key_path = null;
     }
-    
+
     const result = await prisma.server.update({
       where: { id },
       data: {
@@ -213,39 +249,42 @@ class DatabaseServicePrisma {
         ip,
         user,
         password,
-        auth_type: auth_type ?? 'password',
+        auth_type: auth_type ?? "password",
         ssh_key,
         ssh_key_passphrase,
         ssh_port: normalizedPort ?? 22,
         ssh_key_path,
-        key_generated: key_generated !== undefined ? Boolean(key_generated) : (existingServer?.key_generated ?? false),
+        key_generated:
+          key_generated !== undefined
+            ? Boolean(key_generated)
+            : (existingServer?.key_generated ?? false),
         color,
-      }
+      },
     });
-    return result as Server;
+    return result;
   }
 
   async deleteServer(id: number): Promise<Server> {
     // Get server info before deletion to clean up key files
     const server = await this.getServerById(id);
-    
+
     // Delete SSH key files if they exist
     if (server?.ssh_key_path && existsSync(server.ssh_key_path)) {
       try {
         unlinkSync(server.ssh_key_path);
-        const pubKeyPath = server.ssh_key_path + '.pub';
+        const pubKeyPath = server.ssh_key_path + ".pub";
         if (existsSync(pubKeyPath)) {
           unlinkSync(pubKeyPath);
         }
       } catch (error) {
-        console.warn('Failed to delete SSH key file:', error);
+        console.warn("Failed to delete SSH key file:", error);
       }
     }
-    
+
     const result = await prisma.server.delete({
-      where: { id }
+      where: { id },
     });
-    return result as Server;
+    return result;
   }
 
   // Installed Scripts CRUD operations
@@ -255,13 +294,23 @@ class DatabaseServicePrisma {
     container_id?: string;
     server_id?: number;
     execution_mode: string;
-    status: 'in_progress' | 'success' | 'failed';
+    status: "in_progress" | "success" | "failed";
     output_log?: string;
     web_ui_ip?: string;
     web_ui_port?: number;
   }): Promise<InstalledScript> {
-    const { script_name, script_path, container_id, server_id, execution_mode, status, output_log, web_ui_ip, web_ui_port } = scriptData;
-    
+    const {
+      script_name,
+      script_path,
+      container_id,
+      server_id,
+      execution_mode,
+      status,
+      output_log,
+      web_ui_ip,
+      web_ui_port,
+    } = scriptData;
+
     const result = await prisma.installedScript.create({
       data: {
         script_name,
@@ -273,54 +322,68 @@ class DatabaseServicePrisma {
         output_log: output_log ?? null,
         web_ui_ip: web_ui_ip ?? null,
         web_ui_port: web_ui_port ?? null,
-      }
+      },
     });
-    return result as InstalledScript;
+    return result;
   }
 
   async getAllInstalledScripts(): Promise<InstalledScriptWithServer[]> {
     const result = await prisma.installedScript.findMany({
       include: {
         server: true,
-        lxc_config: true
+        lxc_config: true,
       },
-      orderBy: { installation_date: 'desc' }
+      orderBy: { installation_date: "desc" },
     });
-    return result as InstalledScriptWithServer[];
+    return result;
   }
 
-  async getInstalledScriptById(id: number): Promise<InstalledScriptWithServer | null> {
+  async getInstalledScriptById(
+    id: number,
+  ): Promise<InstalledScriptWithServer | null> {
     const result = await prisma.installedScript.findUnique({
       where: { id },
       include: {
-        server: true
-      }
+        server: true,
+      },
     });
-    return result as InstalledScriptWithServer | null;
+    return result;
   }
 
-  async getInstalledScriptsByServer(server_id: number): Promise<InstalledScriptWithServer[]> {
+  async getInstalledScriptsByServer(
+    server_id: number,
+  ): Promise<InstalledScriptWithServer[]> {
     const result = await prisma.installedScript.findMany({
       where: { server_id },
       include: {
         server: true,
-        lxc_config: true
+        lxc_config: true,
       },
-      orderBy: { installation_date: 'desc' }
+      orderBy: { installation_date: "desc" },
     });
-    return result as InstalledScriptWithServer[];
+    return result;
   }
 
-  async updateInstalledScript(id: number, updateData: {
-    script_name?: string;
-    container_id?: string;
-    status?: 'in_progress' | 'success' | 'failed';
-    output_log?: string;
-    web_ui_ip?: string;
-    web_ui_port?: number;
-  }): Promise<InstalledScript | { changes: number }> {
-    const { script_name, container_id, status, output_log, web_ui_ip, web_ui_port } = updateData;
-    
+  async updateInstalledScript(
+    id: number,
+    updateData: {
+      script_name?: string;
+      container_id?: string;
+      status?: "in_progress" | "success" | "failed";
+      output_log?: string;
+      web_ui_ip?: string;
+      web_ui_port?: number;
+    },
+  ): Promise<InstalledScript | { changes: number }> {
+    const {
+      script_name,
+      container_id,
+      status,
+      output_log,
+      web_ui_ip,
+      web_ui_port,
+    } = updateData;
+
     const updateFields: Prisma.InstalledScriptUpdateInput = {};
     if (script_name !== undefined) updateFields.script_name = script_name;
     if (container_id !== undefined) updateFields.container_id = container_id;
@@ -335,78 +398,86 @@ class DatabaseServicePrisma {
 
     const result = await prisma.installedScript.update({
       where: { id },
-      data: updateFields
+      data: updateFields,
     });
-    return result as InstalledScript;
+    return result;
   }
 
   async deleteInstalledScript(id: number): Promise<InstalledScript> {
     const result = await prisma.installedScript.delete({
-      where: { id }
+      where: { id },
     });
-    return result as InstalledScript;
+    return result;
   }
 
-  async deleteInstalledScriptsByServer(server_id: number): Promise<{ count: number }> {
+  async deleteInstalledScriptsByServer(
+    server_id: number,
+  ): Promise<{ count: number }> {
     const result = await prisma.installedScript.deleteMany({
-      where: { server_id }
+      where: { server_id },
     });
-    return result as { count: number };
+    return result;
   }
 
   async getNextServerId(): Promise<number> {
     const result = await prisma.server.findFirst({
-      orderBy: { id: 'desc' },
-      select: { id: true }
+      orderBy: { id: "desc" },
+      select: { id: true },
     });
-    return ((result as { id: number } | null)?.id ?? 0) + 1;
+    return (result?.id ?? 0) + 1;
   }
 
   createSSHKeyFile(serverId: number, sshKey: string): string {
-    const sshKeysDir = join(process.cwd(), 'data', 'ssh-keys');
+    const sshKeysDir = join(process.cwd(), "data", "ssh-keys");
     const keyPath = join(sshKeysDir, `server_${serverId}_key`);
-    
+
     // Normalize the key: trim any trailing whitespace and ensure exactly one newline at the end
-    const normalizedKey = sshKey.trimEnd() + '\n';
+    const normalizedKey = sshKey.trimEnd() + "\n";
     writeFileSync(keyPath, normalizedKey);
     chmodSync(keyPath, 0o600); // Set proper permissions
-    
+
     return keyPath;
   }
 
   // LXC Config CRUD operations
-  async createLXCConfig(scriptId: number, configData: LXCConfigInput): Promise<LXCConfig> {
+  async createLXCConfig(
+    scriptId: number,
+    configData: LXCConfigInput,
+  ): Promise<LXCConfig> {
     const result = await prisma.lXCConfig.create({
       data: {
         installed_script_id: scriptId,
-        ...configData
-      }
+        ...configData,
+      },
     });
-    return result as LXCConfig;
+    return result;
   }
 
-  async updateLXCConfig(scriptId: number, configData: LXCConfigInput): Promise<LXCConfig> {
+  async updateLXCConfig(
+    scriptId: number,
+    configData: LXCConfigInput,
+  ): Promise<LXCConfig> {
     const result = await prisma.lXCConfig.upsert({
       where: { installed_script_id: scriptId },
       update: configData,
       create: {
         installed_script_id: scriptId,
-        ...configData
-      }
+        ...configData,
+      },
     });
-    return result as LXCConfig;
+    return result;
   }
 
   async getLXCConfigByScriptId(scriptId: number): Promise<LXCConfig | null> {
     const result = await prisma.lXCConfig.findUnique({
-      where: { installed_script_id: scriptId }
+      where: { installed_script_id: scriptId },
     });
-    return result as LXCConfig | null;
+    return result;
   }
 
   async deleteLXCConfig(scriptId: number): Promise<void> {
     await prisma.lXCConfig.delete({
-      where: { installed_script_id: scriptId }
+      where: { installed_script_id: scriptId },
     });
   }
 
@@ -420,7 +491,7 @@ class DatabaseServicePrisma {
     size?: bigint;
     created_at?: Date;
     storage_name: string;
-    storage_type: 'local' | 'storage' | 'pbs';
+    storage_type: "local" | "storage" | "pbs";
   }): Promise<Backup> {
     // Find existing backup by container_id, server_id, and backup_path
     const existing = await prisma.backup.findFirst({
@@ -429,7 +500,7 @@ class DatabaseServicePrisma {
         server_id: backupData.server_id,
         backup_path: backupData.backup_path,
       },
-    }) as Backup | null;
+    });
 
     if (existing) {
       // Update existing backup
@@ -445,7 +516,7 @@ class DatabaseServicePrisma {
           discovered_at: new Date(),
         },
       });
-      return result as Backup;
+      return result;
     } else {
       // Create new backup
       const result = await prisma.backup.create({
@@ -462,7 +533,7 @@ class DatabaseServicePrisma {
           discovered_at: new Date(),
         },
       });
-      return result as Backup;
+      return result;
     }
   }
 
@@ -471,12 +542,9 @@ class DatabaseServicePrisma {
       include: {
         server: true,
       },
-      orderBy: [
-        { container_id: 'asc' },
-        { created_at: 'desc' },
-      ],
+      orderBy: [{ container_id: "asc" }, { created_at: "desc" }],
     });
-    return result as BackupWithServer[];
+    return result;
   }
 
   async getBackupById(id: number): Promise<BackupWithServer | null> {
@@ -486,34 +554,41 @@ class DatabaseServicePrisma {
         server: true,
       },
     });
-    return result as BackupWithServer | null;
+    return result;
   }
 
-  async getBackupsByContainerId(containerId: string): Promise<BackupWithServer[]> {
+  async getBackupsByContainerId(
+    containerId: string,
+  ): Promise<BackupWithServer[]> {
     const result = await prisma.backup.findMany({
       where: { container_id: containerId },
       include: {
         server: true,
       },
-      orderBy: { created_at: 'desc' },
+      orderBy: { created_at: "desc" },
     });
-    return result as BackupWithServer[];
+    return result;
   }
 
-  async deleteBackupsForContainer(containerId: string, serverId: number): Promise<{ count: number }> {
+  async deleteBackupsForContainer(
+    containerId: string,
+    serverId: number,
+  ): Promise<{ count: number }> {
     const result = await prisma.backup.deleteMany({
       where: {
         container_id: containerId,
         server_id: serverId,
       },
     });
-    return result as { count: number };
+    return result;
   }
 
-  async getBackupsGroupedByContainer(): Promise<Map<string, BackupWithServer[]>> {
+  async getBackupsGroupedByContainer(): Promise<
+    Map<string, BackupWithServer[]>
+  > {
     const backups = await this.getAllBackups();
     const grouped = new Map<string, BackupWithServer[]>();
-    
+
     for (const backup of backups) {
       const key = backup.container_id;
       if (!grouped.has(key)) {
@@ -521,7 +596,7 @@ class DatabaseServicePrisma {
       }
       grouped.get(key)!.push(backup);
     }
-    
+
     return grouped;
   }
 
@@ -531,6 +606,7 @@ class DatabaseServicePrisma {
     storage_name: string;
     pbs_ip: string;
     pbs_datastore: string;
+    pbs_username: string;
     pbs_password: string;
     pbs_fingerprint: string;
   }): Promise<PBSStorageCredential> {
@@ -544,6 +620,7 @@ class DatabaseServicePrisma {
       update: {
         pbs_ip: credentialData.pbs_ip,
         pbs_datastore: credentialData.pbs_datastore,
+        pbs_username: credentialData.pbs_username,
         pbs_password: credentialData.pbs_password,
         pbs_fingerprint: credentialData.pbs_fingerprint,
         updated_at: new Date(),
@@ -553,14 +630,18 @@ class DatabaseServicePrisma {
         storage_name: credentialData.storage_name,
         pbs_ip: credentialData.pbs_ip,
         pbs_datastore: credentialData.pbs_datastore,
+        pbs_username: credentialData.pbs_username,
         pbs_password: credentialData.pbs_password,
         pbs_fingerprint: credentialData.pbs_fingerprint,
       },
     });
-    return result as PBSStorageCredential;
+    return result;
   }
 
-  async getPBSCredential(serverId: number, storageName: string): Promise<PBSStorageCredential | null> {
+  async getPBSCredential(
+    serverId: number,
+    storageName: string,
+  ): Promise<PBSStorageCredential | null> {
     const result = await prisma.pBSStorageCredential.findUnique({
       where: {
         server_id_storage_name: {
@@ -569,18 +650,23 @@ class DatabaseServicePrisma {
         },
       },
     });
-    return result as PBSStorageCredential | null;
+    return result;
   }
 
-  async getPBSCredentialsByServer(serverId: number): Promise<PBSStorageCredential[]> {
+  async getPBSCredentialsByServer(
+    serverId: number,
+  ): Promise<PBSStorageCredential[]> {
     const result = await prisma.pBSStorageCredential.findMany({
       where: { server_id: serverId },
-      orderBy: { storage_name: 'asc' },
+      orderBy: { storage_name: "asc" },
     });
-    return result as PBSStorageCredential[];
+    return result;
   }
 
-  async deletePBSCredential(serverId: number, storageName: string): Promise<PBSStorageCredential> {
+  async deletePBSCredential(
+    serverId: number,
+    storageName: string,
+  ): Promise<PBSStorageCredential> {
     const result = await prisma.pBSStorageCredential.delete({
       where: {
         server_id_storage_name: {
@@ -589,7 +675,7 @@ class DatabaseServicePrisma {
         },
       },
     });
-    return result as PBSStorageCredential;
+    return result;
   }
 
   async close(): Promise<void> {

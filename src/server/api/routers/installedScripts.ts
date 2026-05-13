@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unnecessary-type-assertion, @typescript-eslint/no-floating-promises */
+/* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return -- Prisma raw results are typed as any throughout this router */
 import { z } from "zod";
 import { createTRPCRouter, publicProcedure } from "~/server/api/trpc";
 import { getDatabase } from "~/server/database-prisma";
@@ -7,61 +7,82 @@ import type { Server } from "~/types/server";
 import { getStorageService } from "~/server/services/storageService";
 
 // Helper function to parse raw LXC config into structured data
-function parseRawConfig(rawConfig: string): any {
-  const lines = rawConfig.split('\n');
-  const config: any = { advanced: [] };
-  
+function parseRawConfig(rawConfig: string): Record<string, any> {
+  const lines = rawConfig.split("\n");
+  const config: Record<string, any> = { advanced: [] as string[] };
+
   for (const line of lines) {
     const trimmed = line.trim();
-    
+
     // Preserve comments in advanced
-    if (trimmed.startsWith('#')) {
+    if (trimmed.startsWith("#")) {
       config.advanced.push(line);
       continue;
     }
-    
+
     if (!trimmed) continue;
-    
-    const [key, ...valueParts] = trimmed.split(':');
-    const value = valueParts.join(':').trim();
-    
+
+    const [key, ...valueParts] = trimmed.split(":");
+    const value = valueParts.join(":").trim();
+
     switch (key?.trim()) {
-      case 'arch': config.arch = value; break;
-      case 'cores': config.cores = parseInt(value); break;
-      case 'memory': config.memory = parseInt(value); break;
-      case 'hostname': config.hostname = value; break;
-      case 'swap': config.swap = parseInt(value); break;
-      case 'onboot': config.onboot = parseInt(value); break;
-      case 'ostype': config.ostype = value; break;
-      case 'unprivileged': config.unprivileged = parseInt(value); break;
-      case 'tags': config.tags = value; break;
-      case 'rootfs': config.rootfs = value; break;
-      case 'net0': 
+      case "arch":
+        config.arch = value;
+        break;
+      case "cores":
+        config.cores = parseInt(value);
+        break;
+      case "memory":
+        config.memory = parseInt(value);
+        break;
+      case "hostname":
+        config.hostname = value;
+        break;
+      case "swap":
+        config.swap = parseInt(value);
+        break;
+      case "onboot":
+        config.onboot = parseInt(value);
+        break;
+      case "ostype":
+        config.ostype = value;
+        break;
+      case "unprivileged":
+        config.unprivileged = parseInt(value);
+        break;
+      case "tags":
+        config.tags = value;
+        break;
+      case "rootfs":
+        config.rootfs = value;
+        break;
+      case "net0":
         // Parse: name=eth0,bridge=vmbr0,gw=10.10.10.254,hwaddr=BC:24:11:EC:0F:F0,ip=10.10.10.164/24,type=veth
-        const parts = value.split(',');
+        const parts = value.split(",");
         for (const part of parts) {
-          const [k, v] = part.split('=');
-          if (k === 'name') config.net_name = v;
-          else if (k === 'bridge') config.net_bridge = v;
-          else if (k === 'hwaddr') config.net_hwaddr = v;
-          else if (k === 'ip') {
+          const [k, v] = part.split("=");
+          if (k === "name") config.net_name = v;
+          else if (k === "bridge") config.net_bridge = v;
+          else if (k === "hwaddr") config.net_hwaddr = v;
+          else if (k === "ip") {
             config.net_ip = v;
-            config.net_ip_type = v === 'dhcp' ? 'dhcp' : 'static';
-          }
-          else if (k === 'gw') config.net_gateway = v;
-          else if (k === 'type') config.net_type = v;
-          else if (k === 'tag' && v) config.net_vlan = parseInt(v);
+            config.net_ip_type = v === "dhcp" ? "dhcp" : "static";
+          } else if (k === "gw") config.net_gateway = v;
+          else if (k === "type") config.net_type = v;
+          else if (k === "tag" && v) config.net_vlan = parseInt(v);
         }
         break;
-      case 'features':
+      case "features":
         // Parse: keyctl=1,nesting=1,fuse=1
-        const feats = value.split(',');
+        const feats = value.split(",");
         for (const feat of feats) {
-          const [k, v] = feat.split('=');
-          if (k === 'keyctl' && v) config.feature_keyctl = parseInt(v);
-          else if (k === 'nesting' && v) config.feature_nesting = parseInt(v);
-          else if (k === 'fuse' && v) config.feature_fuse = parseInt(v);
-          else config.feature_mount = (config.feature_mount ? config.feature_mount + ',' : '') + feat;
+          const [k, v] = feat.split("=");
+          if (k === "keyctl" && v) config.feature_keyctl = parseInt(v);
+          else if (k === "nesting" && v) config.feature_nesting = parseInt(v);
+          else if (k === "fuse" && v) config.feature_fuse = parseInt(v);
+          else
+            config.feature_mount =
+              (config.feature_mount ? config.feature_mount + "," : "") + feat;
         }
         break;
       default:
@@ -69,18 +90,18 @@ function parseRawConfig(rawConfig: string): any {
         config.advanced.push(line);
     }
   }
-  
+
   // Parse rootfs into storage and size
   if (config.rootfs) {
     const match = config.rootfs.match(/^([^:]+):([^,]+)(?:,size=(.+))?$/);
     if (match) {
       config.rootfs_storage = `${match[1]}:${match[2]}`;
-      config.rootfs_size = match[3] ?? '';
+      config.rootfs_size = match[3] ?? "";
     }
     delete config.rootfs; // Remove the rootfs field since we only need rootfs_storage and rootfs_size
   }
-  
-  config.advanced_config = config.advanced.join('\n');
+
+  config.advanced_config = config.advanced.join("\n");
   delete config.advanced; // Remove the advanced array since we only need advanced_config
   return config;
 }
@@ -88,157 +109,188 @@ function parseRawConfig(rawConfig: string): any {
 // Helper function to reconstruct config from structured data
 function reconstructConfig(parsed: any): string {
   const lines: string[] = [];
-  
+
   // Add standard fields in order
   if (parsed.arch) lines.push(`arch: ${parsed.arch}`);
   if (parsed.cores) lines.push(`cores: ${parsed.cores}`);
-  
+
   // Build features line
-  if (parsed.feature_keyctl !== undefined || parsed.feature_nesting !== undefined || parsed.feature_fuse !== undefined) {
+  if (
+    parsed.feature_keyctl !== undefined ||
+    parsed.feature_nesting !== undefined ||
+    parsed.feature_fuse !== undefined
+  ) {
     const feats: string[] = [];
-    if (parsed.feature_keyctl !== undefined) feats.push(`keyctl=${parsed.feature_keyctl}`);
-    if (parsed.feature_nesting !== undefined) feats.push(`nesting=${parsed.feature_nesting}`);
-    if (parsed.feature_fuse !== undefined) feats.push(`fuse=${parsed.feature_fuse}`);
+    if (parsed.feature_keyctl !== undefined)
+      feats.push(`keyctl=${parsed.feature_keyctl}`);
+    if (parsed.feature_nesting !== undefined)
+      feats.push(`nesting=${parsed.feature_nesting}`);
+    if (parsed.feature_fuse !== undefined)
+      feats.push(`fuse=${parsed.feature_fuse}`);
     if (parsed.feature_mount) feats.push(String(parsed.feature_mount));
-    lines.push(`features: ${feats.join(',')}`);
+    lines.push(`features: ${feats.join(",")}`);
   }
-  
+
   if (parsed.hostname) lines.push(`hostname: ${parsed.hostname}`);
   if (parsed.memory) lines.push(`memory: ${parsed.memory}`);
-  
+
   // Build net0 line
   if (parsed.net_name || parsed.net_bridge || parsed.net_ip) {
     const netParts: string[] = [];
     if (parsed.net_name) netParts.push(`name=${parsed.net_name}`);
     if (parsed.net_bridge) netParts.push(`bridge=${parsed.net_bridge}`);
-    if (parsed.net_gateway && parsed.net_ip_type === 'static') netParts.push(`gw=${parsed.net_gateway}`);
+    if (parsed.net_gateway && parsed.net_ip_type === "static")
+      netParts.push(`gw=${parsed.net_gateway}`);
     if (parsed.net_hwaddr) netParts.push(`hwaddr=${parsed.net_hwaddr}`);
     if (parsed.net_ip) netParts.push(`ip=${parsed.net_ip}`);
     if (parsed.net_type) netParts.push(`type=${parsed.net_type}`);
     if (parsed.net_vlan) netParts.push(`tag=${parsed.net_vlan}`);
-    lines.push(`net0: ${netParts.join(',')}`);
+    lines.push(`net0: ${netParts.join(",")}`);
   }
-  
+
   if (parsed.onboot !== undefined) lines.push(`onboot: ${parsed.onboot}`);
   if (parsed.ostype) lines.push(`ostype: ${parsed.ostype}`);
   if (parsed.rootfs_storage) {
-    const rootfs = parsed.rootfs_size 
+    const rootfs = parsed.rootfs_size
       ? `${parsed.rootfs_storage},size=${parsed.rootfs_size}`
       : parsed.rootfs_storage;
     lines.push(`rootfs: ${rootfs}`);
   }
   if (parsed.swap !== undefined) lines.push(`swap: ${parsed.swap}`);
   if (parsed.tags) lines.push(`tags: ${parsed.tags}`);
-  if (parsed.unprivileged !== undefined) lines.push(`unprivileged: ${parsed.unprivileged}`);
-  
+  if (parsed.unprivileged !== undefined)
+    lines.push(`unprivileged: ${parsed.unprivileged}`);
+
   // Add advanced config
   if (parsed.advanced_config) {
     lines.push(String(parsed.advanced_config));
   }
-  
-  return lines.join('\n');
+
+  return lines.join("\n");
 }
 
 // Helper function to calculate config hash
 function calculateConfigHash(rawConfig: string): string {
-  return createHash('md5').update(rawConfig).digest('hex');
+  return createHash("md5").update(rawConfig).digest("hex");
 }
 
 // Helper function to parse rootfs_storage and extract storage pool and disk identifier
-function parseRootfsStorage(rootfs_storage: string): { storagePool: string; diskId: string } | null {
+function parseRootfsStorage(
+  rootfs_storage: string,
+): { storagePool: string; diskId: string } | null {
   // Format: "PROX2-STORAGE2:vm-113-disk-0"
   const regex = /^([^:]+):(.+)$/;
   const match = regex.exec(rootfs_storage);
   if (!match?.[1] || !match?.[2]) return null;
-  
+
   return {
     storagePool: match[1],
-    diskId: match[2]
+    diskId: match[2],
   };
 }
 
 // Helper function to extract size in GB from size string
 function extractSizeInGB(sizeString: string): number {
   if (!sizeString) return 0;
-  
+
   const regex = /^(\d+(?:\.\d+)?)\s*([GMK]?)$/i;
   const match = regex.exec(sizeString);
   if (!match?.[1]) return 0;
-  
+
   const value = parseFloat(match[1]);
-  const unit = (match[2] ?? '').toUpperCase();
-  
+  const unit = (match[2] ?? "").toUpperCase();
+
   switch (unit) {
-    case 'T': return value * 1024;
-    case 'G': return value;
-    case 'M': return value / 1024;
-    case 'K': return value / (1024 * 1024);
-    case '': return value; // Assume GB if no unit
-    default: return 0;
+    case "T":
+      return value * 1024;
+    case "G":
+      return value;
+    case "M":
+      return value / 1024;
+    case "K":
+      return value / (1024 * 1024);
+    case "":
+      return value; // Assume GB if no unit
+    default:
+      return 0;
   }
 }
 
-
 // Helper function to resize disk
 async function resizeDisk(
-  server: Server, 
-  containerId: string, 
-  storageInfo: { storagePool: string; diskId: string }, 
-  oldSizeGB: number, 
-  newSizeGB: number
+  server: Server,
+  containerId: string,
+  storageInfo: { storagePool: string; diskId: string },
+  oldSizeGB: number,
+  newSizeGB: number,
 ): Promise<{ success: boolean; message: string; error?: string }> {
-  const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+  const { default: SSHExecutionService } =
+    await import("~/server/ssh-execution-service");
   const sshExecutionService = new SSHExecutionService();
-  
+
   try {
     // First, try using pct resize (works for most storage types)
     const pctCommand = `pct resize ${containerId} rootfs ${newSizeGB}G`;
-    
+
     return new Promise((resolve) => {
-      let errorOutput = '';
-      let dataOutput = '';
-      
+      let errorOutput = "";
+      let dataOutput = "";
+
       console.log(`Executing pct resize command: ${pctCommand}`);
-      
+
       void sshExecutionService.executeCommand(
         server,
         pctCommand,
         (data: string) => {
           dataOutput += data;
-          console.log('pct resize data:', data);
+          console.log("pct resize data:", data);
         },
         (error: string) => {
           errorOutput += error;
-          console.log('pct resize error:', error);
+          console.log("pct resize error:", error);
         },
         (exitCode: number) => {
           console.log(`pct resize exit code: ${exitCode}`);
           console.log(`pct resize error output: "${errorOutput}"`);
           console.log(`pct resize data output: "${dataOutput}"`);
-          
+
           // Check for error messages in both stderr and stdout
-          const hasError = errorOutput.trim() || dataOutput.toLowerCase().includes('error') || dataOutput.toLowerCase().includes('insufficient');
-          
+          const hasError =
+            errorOutput.trim() ||
+            dataOutput.toLowerCase().includes("error") ||
+            dataOutput.toLowerCase().includes("insufficient");
+
           // Check both exit code and error output for failure
           if (exitCode === 0 && !hasError) {
             resolve({
               success: true,
-              message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using pct resize`
+              message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using pct resize`,
             });
           } else {
             // If pct resize fails (either non-zero exit code or error output), try LVM-specific commands
             const errorMessage = errorOutput.trim() || dataOutput.trim();
-            const combinedError = errorMessage ? `pct resize error: ${errorMessage}` : `pct resize failed with exit code ${exitCode}`;
-            void tryLVMResize(server, containerId, storageInfo, newSizeGB, oldSizeGB, resolve, combinedError);
+            const combinedError = errorMessage
+              ? `pct resize error: ${errorMessage}`
+              : `pct resize failed with exit code ${exitCode}`;
+            void tryLVMResize(
+              server,
+              containerId,
+              storageInfo,
+              newSizeGB,
+              oldSizeGB,
+              resolve,
+              combinedError,
+            );
           }
-        }
+        },
       );
     });
   } catch (error) {
     return {
       success: false,
-      message: 'Resize failed',
-      error: error instanceof Error ? error.message : 'Unknown error during resize'
+      message: "Resize failed",
+      error:
+        error instanceof Error ? error.message : "Unknown error during resize",
     };
   }
 }
@@ -250,119 +302,126 @@ async function tryLVMResize(
   storageInfo: { storagePool: string; diskId: string },
   newSizeGB: number,
   oldSizeGB: number,
-  resolve: (result: { success: boolean; message: string; error?: string }) => void,
-  previousError?: string
+  resolve: (result: {
+    success: boolean;
+    message: string;
+    error?: string;
+  }) => void,
+  previousError?: string,
 ) {
-  const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+  const { default: SSHExecutionService } =
+    await import("~/server/ssh-execution-service");
   const sshExecutionService = new SSHExecutionService();
-  
+
   // Try LVM resize commands
   const lvPath = `/dev/${storageInfo.storagePool}/${storageInfo.diskId}`;
   const lvresizeCommand = `lvresize -L ${newSizeGB}G ${lvPath}`;
-  
+
   void sshExecutionService.executeCommand(
     server,
     lvresizeCommand,
     (_data: string) => {
       // Now resize the filesystem
       const resize2fsCommand = `resize2fs ${lvPath}`;
-      
+
       void sshExecutionService.executeCommand(
         server,
         resize2fsCommand,
         (_fsData: string) => {
           resolve({
             success: true,
-            message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM commands`
+            message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM commands`,
           });
         },
         (fsError: string) => {
           // Try xfs_growfs as fallback
           const xfsCommand = `xfs_growfs ${lvPath}`;
-          
+
           void sshExecutionService.executeCommand(
             server,
             xfsCommand,
             (_xfsData: string) => {
               resolve({
                 success: true,
-                message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM + XFS commands`
+                message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM + XFS commands`,
               });
             },
             (xfsError: string) => {
               resolve({
                 success: false,
-                message: 'Filesystem resize failed',
-                error: `LVM resize succeeded but filesystem resize failed: ${fsError}, XFS fallback also failed: ${xfsError}`
+                message: "Filesystem resize failed",
+                error: `LVM resize succeeded but filesystem resize failed: ${fsError}, XFS fallback also failed: ${xfsError}`,
               });
             },
             (xfsExitCode: number) => {
               if (xfsExitCode === 0) {
                 resolve({
                   success: true,
-                  message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM + XFS commands`
+                  message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM + XFS commands`,
                 });
               } else {
                 resolve({
                   success: false,
-                  message: 'Filesystem resize failed',
-                  error: `LVM resize succeeded but filesystem resize failed: ${fsError}, XFS fallback also failed with exit code ${xfsExitCode}`
+                  message: "Filesystem resize failed",
+                  error: `LVM resize succeeded but filesystem resize failed: ${fsError}, XFS fallback also failed with exit code ${xfsExitCode}`,
                 });
               }
-            }
+            },
           );
         },
         (fsExitCode: number) => {
           if (fsExitCode === 0) {
             resolve({
               success: true,
-              message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM commands`
+              message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM commands`,
             });
           } else {
             // Try xfs_growfs as fallback
             const xfsCommand = `xfs_growfs ${lvPath}`;
-            
+
             void sshExecutionService.executeCommand(
               server,
               xfsCommand,
               (_xfsData: string) => {
                 resolve({
                   success: true,
-                  message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM + XFS commands`
+                  message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM + XFS commands`,
                 });
               },
               (xfsError: string) => {
                 resolve({
                   success: false,
-                  message: 'Filesystem resize failed',
-                  error: `LVM resize succeeded but filesystem resize failed with exit code ${fsExitCode}, XFS fallback also failed: ${xfsError}`
+                  message: "Filesystem resize failed",
+                  error: `LVM resize succeeded but filesystem resize failed with exit code ${fsExitCode}, XFS fallback also failed: ${xfsError}`,
                 });
               },
               (xfsExitCode: number) => {
                 if (xfsExitCode === 0) {
                   resolve({
                     success: true,
-                    message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM + XFS commands`
+                    message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM + XFS commands`,
                   });
                 } else {
                   resolve({
                     success: false,
-                    message: 'Filesystem resize failed',
-                    error: `LVM resize succeeded but filesystem resize failed with exit code ${fsExitCode}, XFS fallback also failed with exit code ${xfsExitCode}`
+                    message: "Filesystem resize failed",
+                    error: `LVM resize succeeded but filesystem resize failed with exit code ${fsExitCode}, XFS fallback also failed with exit code ${xfsExitCode}`,
                   });
                 }
-              }
+              },
             );
           }
-        }
+        },
       );
     },
     (error: string) => {
-      const combinedError = previousError ? `${previousError} LVM error: ${error}` : `LVM resize failed: ${error}`;
+      const combinedError = previousError
+        ? `${previousError} LVM error: ${error}`
+        : `LVM resize failed: ${error}`;
       resolve({
         success: false,
-        message: 'Resize failed',
-        error: `Both pct resize and LVM resize failed. ${combinedError}`
+        message: "Resize failed",
+        error: `Both pct resize and LVM resize failed. ${combinedError}`,
       });
     },
     (exitCode: number) => {
@@ -370,61 +429,89 @@ async function tryLVMResize(
         // This shouldn't happen as we're in the error callback, but handle it
         resolve({
           success: true,
-          message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM commands`
+          message: `Disk resized from ${oldSizeGB}G to ${newSizeGB}G using LVM commands`,
         });
       } else {
-        const combinedError = previousError ? `${previousError} LVM command failed with exit code ${exitCode}` : `LVM command failed with exit code ${exitCode}`;
+        const combinedError = previousError
+          ? `${previousError} LVM command failed with exit code ${exitCode}`
+          : `LVM command failed with exit code ${exitCode}`;
         resolve({
           success: false,
-          message: 'Resize failed',
-          error: `Both pct resize and LVM resize failed. ${combinedError}`
+          message: "Resize failed",
+          error: `Both pct resize and LVM resize failed. ${combinedError}`,
         });
       }
-    }
+    },
   );
 }
 
 // Helper function to determine if a container is a VM or LXC
-async function isVM(scriptId: number, containerId: string, serverId: number | null): Promise<boolean> {
+async function isVM(
+  scriptId: number,
+  containerId: string,
+  serverId: number | null,
+): Promise<boolean> {
   const db = getDatabase();
-  
+
   // Method 1: Check if LXCConfig exists (if exists, it's an LXC container)
   const lxcConfig = await db.getLXCConfigByScriptId(scriptId);
   if (lxcConfig) {
     return false; // Has LXCConfig, so it's an LXC container
   }
-  
+
   // Method 2: If no LXCConfig, check config file paths on server
   if (!serverId) {
     // Can't determine without server, default to false (LXC) for safety
     return false;
   }
-  
+
   try {
     const server = await db.getServerById(serverId);
     if (!server) {
       return false; // Default to LXC if server not found
     }
-    
+
     // Import SSH services
-    const { default: SSHService } = await import('~/server/ssh-service');
-    const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+    const { default: SSHService } = await import("~/server/ssh-service");
+    const { default: SSHExecutionService } =
+      await import("~/server/ssh-execution-service");
     const sshService = new SSHService();
     const sshExecutionService = new SSHExecutionService();
-    
+
     // Test SSH connection
     const connectionTest = await sshService.testSSHConnection(server as Server);
     if (!(connectionTest as any).success) {
       return false; // Default to LXC if SSH fails
     }
-    
+
     // Node-specific paths (multi-node Proxmox: /etc/pve/nodes/NODENAME/...)
-    const nodeName = (server as Server).name;
+    // Get the actual Proxmox node name via SSH (server.name is just a display name)
+    let nodeName = (server as Server).name;
+    try {
+      const hostnameResult = await new Promise<string>((resolve) => {
+        let output = "";
+        void sshExecutionService.executeCommand(
+          server as Server,
+          "hostname",
+          (data: string) => {
+            output += data;
+          },
+          () => {
+            resolve(nodeName);
+          },
+          () => {
+            resolve(output.trim() || nodeName);
+          },
+        );
+      });
+      if (hostnameResult) nodeName = hostnameResult;
+    } catch {
+      // Fallback to server.name if hostname query fails
+    }
     const vmConfigPathNode = `/etc/pve/nodes/${nodeName}/qemu-server/${containerId}.conf`;
     const lxcConfigPathNode = `/etc/pve/nodes/${nodeName}/lxc/${containerId}.conf`;
     // Fallback for single-node or when server.name is not the Proxmox node name
     const vmConfigPathFallback = `/etc/pve/qemu-server/${containerId}.conf`;
-    const lxcConfigPathFallback = `/etc/pve/lxc/${containerId}.conf`;
 
     const checkPathExists = (path: string): Promise<boolean> =>
       new Promise<boolean>((resolve) => {
@@ -433,10 +520,10 @@ async function isVM(scriptId: number, containerId: string, serverId: number | nu
           server as Server,
           `test -f "${path}" && echo "exists" || echo "not_exists"`,
           (data: string) => {
-            if (data.includes('exists')) exists = true;
+            if (data.includes("exists")) exists = true;
           },
           () => resolve(exists),
-          () => resolve(exists)
+          () => resolve(exists),
         );
       });
 
@@ -459,39 +546,57 @@ async function isVM(scriptId: number, containerId: string, serverId: number | nu
 
     return false; // LXC (or neither path exists)
   } catch (error) {
-    console.error('Error determining container type:', error);
+    console.error("Error determining container type:", error);
     return false; // Default to LXC on error
   }
 }
 
+// Cache for batch container type detection – avoids repeated SSH calls
+const containerTypeCacheByServer = new Map<
+  number,
+  { data: Map<string, boolean>; expiry: number }
+>();
+const CONTAINER_TYPE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 // Helper function to batch detect container types for all containers on a server
 // Returns a Map of container_id -> isVM (true for VM, false for LXC)
-async function batchDetectContainerTypes(server: Server): Promise<Map<string, boolean>> {
+async function batchDetectContainerTypes(
+  server: Server,
+): Promise<Map<string, boolean>> {
+  // Check cache first
+  const cached = containerTypeCacheByServer.get(server.id);
+  if (cached && Date.now() < cached.expiry) {
+    return cached.data;
+  }
+
   const containerTypeMap = new Map<string, boolean>();
-  
+
   try {
     // Import SSH services
-    const { default: SSHService } = await import('~/server/ssh-service');
-    const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+    const { default: SSHService } = await import("~/server/ssh-service");
+    const { default: SSHExecutionService } =
+      await import("~/server/ssh-execution-service");
     const sshService = new SSHService();
     const sshExecutionService = new SSHExecutionService();
-    
+
     // Test SSH connection first
     const connectionTest = await sshService.testSSHConnection(server);
     if (!(connectionTest as any).success) {
-      console.warn(`SSH connection failed for server ${server.name}, skipping batch detection`);
+      console.warn(
+        `SSH connection failed for server ${server.name}, skipping batch detection`,
+      );
       return containerTypeMap; // Return empty map if SSH fails
     }
-    
+
     // Helper function to parse list output and extract IDs
     const parseListOutput = (output: string): string[] => {
       const ids: string[] = [];
-      const lines = output.split('\n').filter(line => line.trim());
-      
+      const lines = output.split("\n").filter((line) => line.trim());
+
       for (const line of lines) {
         // Skip header lines
-        if (line.includes('VMID') || line.includes('CTID')) continue;
-        
+        if (line.includes("VMID") || line.includes("CTID")) continue;
+
         // Extract first column (ID)
         const parts = line.trim().split(/\s+/);
         if (parts.length > 0) {
@@ -502,16 +607,16 @@ async function batchDetectContainerTypes(server: Server): Promise<Map<string, bo
           }
         }
       }
-      
+
       return ids;
     };
-    
+
     // Get containers from pct list
-    let pctOutput = '';
+    let pctOutput = "";
     await new Promise<void>((resolve) => {
       void sshExecutionService.executeCommand(
         server,
-        'pct list',
+        "pct list",
         (data: string) => {
           pctOutput += data;
         },
@@ -522,16 +627,16 @@ async function batchDetectContainerTypes(server: Server): Promise<Map<string, bo
         },
         (_exitCode: number) => {
           resolve();
-        }
+        },
       );
     });
-    
+
     // Get VMs from qm list
-    let qmOutput = '';
+    let qmOutput = "";
     await new Promise<void>((resolve) => {
       void sshExecutionService.executeCommand(
         server,
-        'qm list',
+        "qm list",
         (data: string) => {
           qmOutput += data;
         },
@@ -542,118 +647,126 @@ async function batchDetectContainerTypes(server: Server): Promise<Map<string, bo
         },
         (_exitCode: number) => {
           resolve();
-        }
+        },
       );
     });
-    
+
     // Parse IDs from both lists
     const containerIds = parseListOutput(pctOutput);
     const vmIds = parseListOutput(qmOutput);
-    
+
     // Mark all LXC containers as false (not VM)
     for (const id of containerIds) {
       containerTypeMap.set(id, false);
     }
-    
+
     // Mark all VMs as true (is VM)
     for (const id of vmIds) {
       containerTypeMap.set(id, true);
     }
-    
   } catch (error) {
-    console.error(`Error in batchDetectContainerTypes for server ${server.name}:`, error);
+    console.error(
+      `Error in batchDetectContainerTypes for server ${server.name}:`,
+      error,
+    );
     // Return empty map on error - individual checks will fall back to isVM()
   }
-  
+
+  // Store in cache
+  containerTypeCacheByServer.set(server.id, {
+    data: containerTypeMap,
+    expiry: Date.now() + CONTAINER_TYPE_CACHE_TTL,
+  });
+
   return containerTypeMap;
 }
 
-
 export const installedScriptsRouter = createTRPCRouter({
   // Get all installed scripts
-  getAllInstalledScripts: publicProcedure
-    .query(async () => {
-      try {
-        const db = getDatabase();
-        const scripts = await db.getAllInstalledScripts();
-        
-        // Group scripts by server_id for batch detection
-        const scriptsByServer = new Map<number, any[]>();
-        const serversMap = new Map<number, Server>();
-        
-        for (const script of scripts) {
-          if (script.server_id && script.server) {
-            if (!scriptsByServer.has(script.server_id)) {
-              scriptsByServer.set(script.server_id, []);
-              serversMap.set(script.server_id, script.server as Server);
-            }
-            scriptsByServer.get(script.server_id)!.push(script);
+  getAllInstalledScripts: publicProcedure.query(async () => {
+    try {
+      const db = getDatabase();
+      const scripts = await db.getAllInstalledScripts();
+
+      // Group scripts by server_id for batch detection
+      const scriptsByServer = new Map<number, any[]>();
+      const serversMap = new Map<number, Server>();
+
+      for (const script of scripts) {
+        if (script.server_id && script.server) {
+          if (!scriptsByServer.has(script.server_id)) {
+            scriptsByServer.set(script.server_id, []);
+            serversMap.set(script.server_id, script.server as Server);
           }
+          scriptsByServer.get(script.server_id)!.push(script);
         }
-        
-        // Batch detect container types for each server
-        const containerTypeMap = new Map<string, boolean>();
-        const batchDetectionPromises = Array.from(serversMap.entries()).map(async ([serverId, server]) => {
+      }
+
+      // Batch detect container types for each server via SSH
+      const containerTypeMap = new Map<string, boolean>();
+      const batchDetectionPromises = Array.from(serversMap.entries()).map(
+        async ([serverId, server]) => {
           try {
             const serverTypeMap = await batchDetectContainerTypes(server);
-            // Merge into main map with server-specific prefix to avoid collisions
-            // Actually, container IDs are unique across the cluster, so we can use them directly
             for (const [containerId, isVM] of serverTypeMap.entries()) {
-              containerTypeMap.set(containerId, isVM);
+              containerTypeMap.set(`${serverId}:${containerId}`, isVM);
             }
           } catch (error) {
-            console.error(`Error batch detecting types for server ${serverId}:`, error);
-            // Continue with other servers
+            console.error(
+              `Error batch detecting types for server ${serverId}:`,
+              error,
+            );
           }
-        });
-        
-        await Promise.all(batchDetectionPromises);
-        
-        // Transform scripts to flatten server data for frontend compatibility
-        const transformedScripts = scripts.map((script: any) => {
-          // Determine if it's a VM or LXC from batch detection map, fall back to isVM() if not found
-          let is_vm = false;
-          if (script.container_id && script.server_id) {
-            // First check if we have it in the batch detection map
-            if (containerTypeMap.has(script.container_id)) {
-              is_vm = containerTypeMap.get(script.container_id) ?? false;
-            } else {
-              // Fall back to checking LXCConfig in database (fast, no SSH needed)
-              // If LXCConfig exists, it's an LXC container
-              const hasLXCConfig = script.lxc_config !== null && script.lxc_config !== undefined;
-              is_vm = !hasLXCConfig; // If no LXCConfig, might be VM, but default to false for safety
-            }
+        },
+      );
+
+      await Promise.all(batchDetectionPromises);
+
+      // Transform scripts to flatten server data for frontend compatibility
+      const transformedScripts = scripts.map((script: any) => {
+        // Use SSH detection result, fall back to DB heuristic
+        let is_vm = false;
+        if (script.container_id && script.server_id) {
+          const key = `${script.server_id}:${script.container_id}`;
+          if (containerTypeMap.has(key)) {
+            is_vm = containerTypeMap.get(key) ?? false;
           }
-          
-          return {
-            ...script,
-            server_name: script.server?.name ?? null,
-            server_ip: script.server?.ip ?? null,
-            server_user: script.server?.user ?? null,
-            server_password: script.server?.password ?? null,
-            server_auth_type: script.server?.auth_type ?? null,
-            server_ssh_key: script.server?.ssh_key ?? null,
-            server_ssh_key_passphrase: script.server?.ssh_key_passphrase ?? null,
-            server_ssh_port: script.server?.ssh_port ?? null,
-            server_color: script.server?.color ?? null,
-            is_vm,
-            server: undefined // Remove nested server object
-          };
-        });
-        
+          // If not in batch detection map, default to LXC (false) for safety
+          // Only the batch detection (pct list / qm list) can reliably determine VM vs LXC
+        }
+
         return {
-          success: true,
-          scripts: transformedScripts
+          ...script,
+          server_name: script.server?.name ?? null,
+          server_ip: script.server?.ip ?? null,
+          server_user: script.server?.user ?? null,
+          server_password: script.server?.password ?? null,
+          server_auth_type: script.server?.auth_type ?? null,
+          server_ssh_key: script.server?.ssh_key ?? null,
+          server_ssh_key_passphrase: script.server?.ssh_key_passphrase ?? null,
+          server_ssh_port: script.server?.ssh_port ?? null,
+          server_color: script.server?.color ?? null,
+          is_vm,
+          server: undefined, // Remove nested server object
         };
-      } catch (error) {
-        console.error('Error in getAllInstalledScripts:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to fetch installed scripts',
-          scripts: []
-        };
-      }
-    }),
+      });
+
+      return {
+        success: true,
+        scripts: transformedScripts,
+      };
+    } catch (error) {
+      console.error("Error in getAllInstalledScripts:", error);
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch installed scripts",
+        scripts: [],
+      };
+    }
+  }),
 
   // Get installed scripts by server
   getInstalledScriptsByServer: publicProcedure
@@ -662,34 +775,35 @@ export const installedScriptsRouter = createTRPCRouter({
       try {
         const db = getDatabase();
         const scripts = await db.getInstalledScriptsByServer(input.serverId);
-        
+
         // Batch detect container types for this server
         let containerTypeMap = new Map<string, boolean>();
         if (scripts.length > 0 && scripts[0]?.server) {
           try {
-            containerTypeMap = await batchDetectContainerTypes(scripts[0].server as Server);
+            containerTypeMap = await batchDetectContainerTypes(
+              scripts[0].server as Server,
+            );
           } catch (error) {
-            console.error(`Error batch detecting types for server ${input.serverId}:`, error);
+            console.error(
+              `Error batch detecting types for server ${input.serverId}:`,
+              error,
+            );
             // Continue with empty map, will fall back to LXCConfig check
           }
         }
-        
+
         // Transform scripts to flatten server data for frontend compatibility
         const transformedScripts = scripts.map((script: any) => {
-          // Determine if it's a VM or LXC from batch detection map, fall back to LXCConfig check if not found
+          // Determine if it's a VM or LXC from batch detection map
           let is_vm = false;
           if (script.container_id && script.server_id) {
-            // First check if we have it in the batch detection map
             if (containerTypeMap.has(script.container_id)) {
               is_vm = containerTypeMap.get(script.container_id) ?? false;
-            } else {
-              // Fall back to checking LXCConfig in database (fast, no SSH needed)
-              // If LXCConfig exists, it's an LXC container
-              const hasLXCConfig = script.lxc_config !== null && script.lxc_config !== undefined;
-              is_vm = !hasLXCConfig; // If no LXCConfig, might be VM, but default to false for safety
             }
+            // If not in batch detection map, default to LXC (false) for safety
+            // Only the batch detection (pct list / qm list) can reliably determine VM vs LXC
           }
-          
+
           return {
             ...script,
             server_name: script.server?.name ?? null,
@@ -698,24 +812,28 @@ export const installedScriptsRouter = createTRPCRouter({
             server_password: script.server?.password ?? null,
             server_auth_type: script.server?.auth_type ?? null,
             server_ssh_key: script.server?.ssh_key ?? null,
-            server_ssh_key_passphrase: script.server?.ssh_key_passphrase ?? null,
+            server_ssh_key_passphrase:
+              script.server?.ssh_key_passphrase ?? null,
             server_ssh_port: script.server?.ssh_port ?? null,
             server_color: script.server?.color ?? null,
             is_vm,
-            server: undefined // Remove nested server object
+            server: undefined, // Remove nested server object
           };
         });
-        
+
         return {
           success: true,
-          scripts: transformedScripts
+          scripts: transformedScripts,
         };
       } catch (error) {
-        console.error('Error in getInstalledScriptsByServer:', error);
+        console.error("Error in getInstalledScriptsByServer:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to fetch installed scripts by server',
-          scripts: []
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch installed scripts by server",
+          scripts: [],
         };
       }
     }),
@@ -730,8 +848,8 @@ export const installedScriptsRouter = createTRPCRouter({
         if (!script) {
           return {
             success: false,
-            error: 'Installed script not found',
-            script: null
+            error: "Installed script not found",
+            script: null,
           };
         }
         // Determine if it's a VM or LXC
@@ -739,7 +857,7 @@ export const installedScriptsRouter = createTRPCRouter({
         if (script.container_id && script.server_id) {
           is_vm = await isVM(script.id, script.container_id, script.server_id);
         }
-        
+
         // Transform script to flatten server data for frontend compatibility
         const transformedScript = {
           ...script,
@@ -753,36 +871,41 @@ export const installedScriptsRouter = createTRPCRouter({
           server_ssh_port: script.server?.ssh_port ?? null,
           server_color: script.server?.color ?? null,
           is_vm,
-          server: undefined // Remove nested server object
+          server: undefined, // Remove nested server object
         };
-        
+
         return {
           success: true,
-          script: transformedScript
+          script: transformedScript,
         };
       } catch (error) {
-        console.error('Error in getInstalledScriptById:', error);
+        console.error("Error in getInstalledScriptById:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to fetch installed script',
-          script: null
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch installed script",
+          script: null,
         };
       }
     }),
 
   // Create new installed script record
   createInstalledScript: publicProcedure
-    .input(z.object({
-      script_name: z.string(),
-      script_path: z.string(),
-      container_id: z.string().optional(),
-      server_id: z.number().optional(),
-      execution_mode: z.enum(['local', 'ssh']),
-      status: z.enum(['in_progress', 'success', 'failed']),
-      output_log: z.string().optional(),
-      web_ui_ip: z.string().optional(),
-      web_ui_port: z.number().optional()
-    }))
+    .input(
+      z.object({
+        script_name: z.string(),
+        script_path: z.string(),
+        container_id: z.string().optional(),
+        server_id: z.number().optional(),
+        execution_mode: z.enum(["local", "ssh"]),
+        status: z.enum(["in_progress", "success", "failed"]),
+        output_log: z.string().optional(),
+        web_ui_ip: z.string().optional(),
+        web_ui_port: z.number().optional(),
+      }),
+    )
     .mutation(async ({ input }) => {
       try {
         const db = getDatabase();
@@ -790,50 +913,58 @@ export const installedScriptsRouter = createTRPCRouter({
         return {
           success: true,
           id: result.id,
-          message: 'Installed script record created successfully'
+          message: "Installed script record created successfully",
         };
       } catch (error) {
-        console.error('Error in createInstalledScript:', error);
+        console.error("Error in createInstalledScript:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to create installed script record'
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to create installed script record",
         };
       }
     }),
 
   // Update installed script
   updateInstalledScript: publicProcedure
-    .input(z.object({
-      id: z.number(),
-      script_name: z.string().optional(),
-      container_id: z.string().optional(),
-      status: z.enum(['in_progress', 'success', 'failed']).optional(),
-      output_log: z.string().optional(),
-      web_ui_ip: z.string().optional(),
-      web_ui_port: z.number().optional()
-    }))
+    .input(
+      z.object({
+        id: z.number(),
+        script_name: z.string().optional(),
+        container_id: z.string().optional(),
+        status: z.enum(["in_progress", "success", "failed"]).optional(),
+        output_log: z.string().optional(),
+        web_ui_ip: z.string().optional(),
+        web_ui_port: z.number().optional(),
+      }),
+    )
     .mutation(async ({ input }) => {
       try {
         const { id, ...updateData } = input;
         const db = getDatabase();
         const result = await db.updateInstalledScript(id, updateData);
-        
+
         if (!result) {
           return {
             success: false,
-            error: 'No changes made or script not found'
+            error: "No changes made or script not found",
           };
         }
-        
+
         return {
           success: true,
-          message: 'Installed script updated successfully'
+          message: "Installed script updated successfully",
         };
       } catch (error) {
-        console.error('Error in updateInstalledScript:', error);
+        console.error("Error in updateInstalledScript:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to update installed script'
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to update installed script",
         };
       }
     }),
@@ -845,106 +976,112 @@ export const installedScriptsRouter = createTRPCRouter({
       try {
         const db = getDatabase();
         const result = await db.deleteInstalledScript(input.id);
-        
+
         if (!result) {
           return {
             success: false,
-            error: 'Script not found or already deleted'
+            error: "Script not found or already deleted",
           };
         }
-        
+
         return {
           success: true,
-          message: 'Installed script deleted successfully'
+          message: "Installed script deleted successfully",
         };
       } catch (error) {
-        console.error('Error in deleteInstalledScript:', error);
+        console.error("Error in deleteInstalledScript:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to delete installed script'
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to delete installed script",
         };
       }
     }),
 
   // Get installation statistics
-  getInstallationStats: publicProcedure
-    .query(async () => {
-      try {
-        const db = getDatabase();
-        const allScripts = await db.getAllInstalledScripts();
-        
-        const stats = {
-          total: allScripts.length,
-          byStatus: {
-            success: allScripts.filter((s: any) => s.status === 'success').length,
-            failed: allScripts.filter((s: any) => s.status === 'failed').length,
-            in_progress: allScripts.filter((s: any) => s.status === 'in_progress').length
-          },
-          byMode: {
-            local: allScripts.filter((s: any) => s.execution_mode === 'local').length,
-            ssh: allScripts.filter((s: any) => s.execution_mode === 'ssh').length
-          },
-          byServer: {} as Record<string, number>
-        };
+  getInstallationStats: publicProcedure.query(async () => {
+    try {
+      const db = getDatabase();
+      const allScripts = await db.getAllInstalledScripts();
 
-        // Count by server
-        allScripts.forEach((script: any) => {
-          const serverKey = script.server_name ?? 'Local';
-          stats.byServer[serverKey] = (stats.byServer[serverKey] ?? 0) + 1;
-        });
+      const stats = {
+        total: allScripts.length,
+        byStatus: {
+          success: allScripts.filter((s: any) => s.status === "success").length,
+          failed: allScripts.filter((s: any) => s.status === "failed").length,
+          in_progress: allScripts.filter((s: any) => s.status === "in_progress")
+            .length,
+        },
+        byMode: {
+          local: allScripts.filter((s: any) => s.execution_mode === "local")
+            .length,
+          ssh: allScripts.filter((s: any) => s.execution_mode === "ssh").length,
+        },
+        byServer: {} as Record<string, number>,
+      };
 
-        return {
-          success: true,
-          stats
-        };
-      } catch (error) {
-        console.error('Error in getInstallationStats:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to fetch installation statistics',
-          stats: null
-        };
-      }
-    }),
+      // Count by server
+      allScripts.forEach((script: any) => {
+        const serverKey = script.server_name ?? "Local";
+        stats.byServer[serverKey] = (stats.byServer[serverKey] ?? 0) + 1;
+      });
+
+      return {
+        success: true,
+        stats,
+      };
+    } catch (error) {
+      console.error("Error in getInstallationStats:", error);
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch installation statistics",
+        stats: null,
+      };
+    }
+  }),
 
   // Auto-detect LXC containers with community-script tag
   autoDetectLXCContainers: publicProcedure
     .input(z.object({ serverId: z.number() }))
     .mutation(async ({ input }) => {
-      
       try {
-        
         const db = getDatabase();
         const server = await db.getServerById(input.serverId);
-        
+
         if (!server) {
-          console.error('Server not found for ID:', input.serverId);
+          console.error("Server not found for ID:", input.serverId);
           return {
             success: false,
-            error: 'Server not found',
-            detectedContainers: []
+            error: "Server not found",
+            detectedContainers: [],
           };
         }
 
-
         // Import SSH services
-        const { default: SSHService } = await import('~/server/ssh-service');
-        const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
+        const { default: SSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshService = new SSHService();
         const sshExecutionService = new SSHExecutionService();
-        
-              // Test SSH connection first
-               
-              const connectionTest = await sshService.testSSHConnection(server as Server);
-              
-              if (!(connectionTest as any).success) {
-                return {
-                  success: false,
-                  error: `SSH connection failed: ${(connectionTest as any).error ?? 'Unknown error'}`,
-                  detectedContainers: []
-                };
-              }
 
+        // Test SSH connection first
+
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
+
+        if (!(connectionTest as any).success) {
+          return {
+            success: false,
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
+            detectedContainers: [],
+          };
+        }
 
         // Get containers from pct list and VMs from qm list
         let detectedContainers: any[] = [];
@@ -952,38 +1089,78 @@ export const installedScriptsRouter = createTRPCRouter({
         // Helper function to parse list output and extract IDs
         const parseListOutput = (output: string, _isVM: boolean): string[] => {
           const ids: string[] = [];
-          const lines = output.split('\n').filter(line => line.trim());
-          
+          const lines = output.split("\n").filter((line) => line.trim());
+
           for (const line of lines) {
             // Skip header lines
-            if (line.includes('VMID') || line.includes('CTID')) continue;
-            
+            if (line.includes("VMID") || line.includes("CTID")) continue;
+
             // Extract first column (ID)
             const parts = line.trim().split(/\s+/);
             if (parts.length > 0) {
               const id = parts[0]?.trim();
-              // Validate ID format (3-4 digits typically)
-              if (id && /^\d{3,4}$/.test(id)) {
+              // Validate ID format (numeric, typically 100+)
+              if (id && /^\d+$/.test(id)) {
                 ids.push(id);
               }
             }
           }
-          
+
           return ids;
         };
 
-        // Helper function to check config file for community-script tag and extract hostname/name
-        const nodeName = (server as Server).name;
-        const checkConfigAndExtractInfo = async (id: string, isVM: boolean): Promise<any> => {
-          const configPath = isVM 
+        // Read configurable detection tag (default: community-script)
+        let detectionTag = "community-script";
+        try {
+          const { readFileSync } = await import("fs");
+          const { join: pathJoin } = await import("path");
+          const envContent = readFileSync(
+            pathJoin(process.cwd(), ".env"),
+            "utf8",
+          );
+          const tagMatch = /^CONTAINER_DETECTION_TAG=(.*)$/m.exec(envContent);
+          if (tagMatch?.[1]?.trim()) detectionTag = tagMatch[1].trim();
+        } catch {
+          // .env not readable – use default
+        }
+
+        // Helper function to check config file for detection tag and extract hostname/name
+        // Get the actual Proxmox node name via SSH (server.name is just a display name)
+        let nodeName = (server as Server).name;
+        try {
+          const hostnameResult = await new Promise<string>((resolve) => {
+            let output = "";
+            void sshExecutionService.executeCommand(
+              server as Server,
+              "hostname",
+              (data: string) => {
+                output += data;
+              },
+              () => {
+                resolve(nodeName);
+              },
+              () => {
+                resolve(output.trim() || nodeName);
+              },
+            );
+          });
+          if (hostnameResult) nodeName = hostnameResult;
+        } catch {
+          // Fallback to server.name if hostname query fails
+        }
+        const checkConfigAndExtractInfo = async (
+          id: string,
+          isVM: boolean,
+        ): Promise<any> => {
+          const configPath = isVM
             ? `/etc/pve/nodes/${nodeName}/qemu-server/${id}.conf`
             : `/etc/pve/nodes/${nodeName}/lxc/${id}.conf`;
-          
+
           const readCommand = `cat "${configPath}" 2>/dev/null`;
-          
+
           return new Promise<any>((resolve) => {
-            let configData = '';
-            
+            let configData = "";
+
             void sshExecutionService.executeCommand(
               server as Server,
               readCommand,
@@ -995,39 +1172,39 @@ export const installedScriptsRouter = createTRPCRouter({
                 resolve(null);
               },
               (_exitCode: number) => {
-                // Check if config contains community-script tag
-                if (!configData.includes('community-script')) {
+                // Check if config contains the configured detection tag
+                if (!configData.includes(detectionTag)) {
                   resolve(null);
                   return;
                 }
 
                 // Extract hostname (for containers) or name (for VMs)
-                const lines = configData.split('\n');
-                let hostname = '';
-                let name = '';
+                const lines = configData.split("\n");
+                let hostname = "";
+                let name = "";
 
                 for (const line of lines) {
                   const trimmedLine = line.trim();
-                  if (trimmedLine.startsWith('hostname:')) {
+                  if (trimmedLine.startsWith("hostname:")) {
                     hostname = trimmedLine.substring(9).trim();
-                  } else if (trimmedLine.startsWith('name:')) {
+                  } else if (trimmedLine.startsWith("name:")) {
                     name = trimmedLine.substring(5).trim();
                   }
                 }
 
                 // Use hostname for containers, name for VMs
                 const displayName = isVM ? name : hostname;
-                
+
                 if (displayName) {
                   // Parse full config and store in database (only for containers)
                   let parsedConfig = null;
                   let configHash = null;
-                  
+
                   if (!isVM) {
                     parsedConfig = parseRawConfig(configData);
                     configHash = calculateConfigHash(configData);
                   }
-                  
+
                   resolve({
                     containerId: id,
                     hostname: displayName,
@@ -1035,55 +1212,57 @@ export const installedScriptsRouter = createTRPCRouter({
                     isVM,
                     serverId: Number((server as any).id),
                     serverName: (server as any).name,
-                    parsedConfig: parsedConfig ? {
-                      ...parsedConfig,
-                      config_hash: configHash,
-                      synced_at: new Date()
-                    } : null
+                    parsedConfig: parsedConfig
+                      ? {
+                          ...parsedConfig,
+                          config_hash: configHash,
+                          synced_at: new Date(),
+                        }
+                      : null,
                   });
                 } else {
                   resolve(null);
                 }
-              }
+              },
             );
           });
         };
 
         // Get containers from pct list
-        let pctOutput = '';
+        let pctOutput = "";
         await new Promise<void>((resolve, reject) => {
           void sshExecutionService.executeCommand(
             server as Server,
-            'pct list',
+            "pct list",
             (data: string) => {
               pctOutput += data;
             },
             (error: string) => {
-              console.error('pct list error:', error);
+              console.error("pct list error:", error);
               reject(new Error(`pct list failed: ${error}`));
             },
             (_exitCode: number) => {
               setImmediate(() => resolve());
-            }
+            },
           );
         });
 
         // Get VMs from qm list
-        let qmOutput = '';
+        let qmOutput = "";
         await new Promise<void>((resolve, reject) => {
           void sshExecutionService.executeCommand(
             server as Server,
-            'qm list',
+            "qm list",
             (data: string) => {
               qmOutput += data;
             },
             (error: string) => {
-              console.error('qm list error:', error);
+              console.error("qm list error:", error);
               reject(new Error(`qm list failed: ${error}`));
             },
             (_exitCode: number) => {
               setImmediate(() => resolve());
-            }
+            },
           );
         });
 
@@ -1093,13 +1272,12 @@ export const installedScriptsRouter = createTRPCRouter({
 
         // Check each container/VM for community-script tag
         const checkPromises = [
-          ...containerIds.map(id => checkConfigAndExtractInfo(id, false)),
-          ...vmIds.map(id => checkConfigAndExtractInfo(id, true))
+          ...containerIds.map((id) => checkConfigAndExtractInfo(id, false)),
+          ...vmIds.map((id) => checkConfigAndExtractInfo(id, true)),
         ];
 
         const results = await Promise.all(checkPromises);
-        detectedContainers = results.filter(result => result !== null);
-
+        detectedContainers = results.filter((result) => result !== null);
 
         // Get existing scripts to check for duplicates
         const existingScripts = await db.getAllInstalledScripts();
@@ -1107,20 +1285,21 @@ export const installedScriptsRouter = createTRPCRouter({
         // Create installed script records for detected containers (skip duplicates)
         const createdScripts = [];
         const skippedScripts = [];
-        
+
         for (const container of detectedContainers) {
           try {
             // Check if a script with this container_id and server_id already exists
-            const duplicate = existingScripts.find((script: any) => 
-              script.container_id === container.containerId && 
-              script.server_id === container.serverId
+            const duplicate = existingScripts.find(
+              (script: any) =>
+                script.container_id === container.containerId &&
+                script.server_id === container.serverId,
             );
 
             if (duplicate) {
               skippedScripts.push({
                 containerId: container.containerId,
                 hostname: container.hostname,
-                serverName: container.serverName
+                serverName: container.serverName,
               });
               continue;
             }
@@ -1130,459 +1309,572 @@ export const installedScriptsRouter = createTRPCRouter({
               script_path: `detected/${container.hostname}`,
               container_id: container.containerId,
               server_id: container.serverId,
-              execution_mode: 'ssh',
-              status: 'success',
-              output_log: `Auto-detected from ${container.isVM ? 'VM' : 'LXC'} config: ${container.configPath}`
+              execution_mode: "ssh",
+              status: "success",
+              output_log: `Auto-detected from ${container.isVM ? "VM" : "LXC"} config: ${container.configPath}`,
             });
-            
+
             // Store LXC config in database (only for containers, not VMs)
             if (container.parsedConfig && !container.isVM) {
               await db.createLXCConfig(result.id, container.parsedConfig);
             }
-            
+
             createdScripts.push({
               id: result.id,
               containerId: container.containerId,
               hostname: container.hostname,
-              serverName: container.serverName
+              serverName: container.serverName,
             });
           } catch (error) {
-            console.error(`Error creating script record for ${container.hostname}:`, error);
+            console.error(
+              `Error creating script record for ${container.hostname}:`,
+              error,
+            );
           }
         }
 
-        const message = skippedScripts.length > 0 
-          ? `Auto-detection completed. Found ${detectedContainers.length} containers/VMs with community-script tag. Added ${createdScripts.length} new scripts, skipped ${skippedScripts.length} duplicates.`
-          : `Auto-detection completed. Found ${detectedContainers.length} containers/VMs with community-script tag. Added ${createdScripts.length} new scripts.`;
+        const message =
+          skippedScripts.length > 0
+            ? `Auto-detection completed. Found ${detectedContainers.length} containers/VMs with '${detectionTag}' tag. Added ${createdScripts.length} new scripts, skipped ${skippedScripts.length} duplicates.`
+            : `Auto-detection completed. Found ${detectedContainers.length} containers/VMs with '${detectionTag}' tag. Added ${createdScripts.length} new scripts.`;
 
         return {
           success: true,
           message: message,
           detectedContainers: createdScripts,
-          skippedContainers: skippedScripts
+          skippedContainers: skippedScripts,
         };
       } catch (error) {
-        console.error('Error in autoDetectLXCContainers:', error);
+        console.error("Error in autoDetectLXCContainers:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to auto-detect LXC containers',
-          detectedContainers: []
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to auto-detect LXC containers",
+          detectedContainers: [],
         };
       }
     }),
 
   // Cleanup orphaned scripts (check if LXC containers still exist on servers)
-  cleanupOrphanedScripts: publicProcedure
-    .mutation(async () => {
-      try {
-        
-        const db = getDatabase();
-        const allScripts = await db.getAllInstalledScripts();
-        const allServers = await db.getAllServers();
-        
-        
-        if (allScripts.length === 0) {
-          return {
-            success: true,
-            message: 'No scripts to check',
-            deletedCount: 0,
-            deletedScripts: []
-          };
+  cleanupOrphanedScripts: publicProcedure.mutation(async () => {
+    try {
+      const db = getDatabase();
+      const allScripts = await db.getAllInstalledScripts();
+      const allServers = await db.getAllServers();
+
+      if (allScripts.length === 0) {
+        return {
+          success: true,
+          message: "No scripts to check",
+          deletedCount: 0,
+          deletedScripts: [],
+        };
+      }
+
+      // Import SSH services
+      const { default: SSHService } = await import("~/server/ssh-service");
+      const { default: SSHExecutionService } =
+        await import("~/server/ssh-execution-service");
+      const sshService = new SSHService();
+      const sshExecutionService = new SSHExecutionService();
+
+      const deletedScripts: string[] = [];
+
+      // --- Pass 1: Remove records whose server no longer exists (any mode) ---
+      const serverIds = new Set(allServers.map((s: any) => Number(s.id)));
+      for (const script of allScripts) {
+        const scriptData = script as any;
+        if (
+          scriptData.server_id &&
+          !serverIds.has(Number(scriptData.server_id))
+        ) {
+          await db.deleteInstalledScript(Number(scriptData.id));
+          deletedScripts.push(String(scriptData.script_name));
         }
+      }
 
-        // Import SSH services
-        const { default: SSHService } = await import('~/server/ssh-service');
-        const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
-        const sshService = new SSHService();
-        const sshExecutionService = new SSHExecutionService();
+      // Re-fetch after deletions so we don't double-process
+      const afterPass1 = (await db.getAllInstalledScripts()) as any[];
 
-        const deletedScripts: string[] = [];
-        const scriptsToCheck = allScripts.filter((script: any) => 
-          script.execution_mode === 'ssh' && 
-          script.server_id && 
-          script.container_id
-        );
+      // --- Pass 1.5: SSH records with a valid server but no container_id (stuck/failed installs) ---
+      const noContainerScripts = afterPass1.filter(
+        (script: any) =>
+          script.execution_mode === "ssh" &&
+          script.server_id &&
+          !script.container_id,
+      );
+      for (const script of noContainerScripts) {
+        await db.deleteInstalledScript(Number(script.id));
+        deletedScripts.push(String(script.script_name));
+      }
 
+      const remainingScripts =
+        noContainerScripts.length > 0
+          ? ((await db.getAllInstalledScripts()) as any[])
+          : afterPass1;
 
-        // Group scripts by server to batch check containers
-        const scriptsByServer = new Map<number, any[]>();
-        for (const script of scriptsToCheck) {
-          const scriptData = script as any;
-          if (!scriptData.server_id) continue;
-          
-          if (!scriptsByServer.has(scriptData.server_id)) {
-            scriptsByServer.set(scriptData.server_id, []);
+      // --- Pass 2: SSH scripts whose container_id no longer exists on the server ---
+      const scriptsToCheck = remainingScripts.filter(
+        (script: any) =>
+          script.execution_mode === "ssh" &&
+          script.server_id &&
+          script.container_id,
+      );
+      // Group scripts by server to batch check containers
+      const scriptsByServer = new Map<number, any[]>();
+      for (const script of scriptsToCheck) {
+        const scriptData = script;
+        if (!scriptData.server_id) continue;
+
+        if (!scriptsByServer.has(scriptData.server_id)) {
+          scriptsByServer.set(scriptData.server_id, []);
+        }
+        scriptsByServer.get(scriptData.server_id)!.push(scriptData);
+      }
+
+      // Process each server
+      for (const [serverId, serverScripts] of scriptsByServer.entries()) {
+        try {
+          const server = allServers.find((s: any) => s.id === serverId);
+          if (!server) {
+            // Server doesn't exist, delete all scripts for this server
+            for (const scriptData of serverScripts) {
+              await db.deleteInstalledScript(Number(scriptData.id));
+              deletedScripts.push(String(scriptData.script_name));
+            }
+            continue;
           }
-          scriptsByServer.get(scriptData.server_id)!.push(scriptData);
-        }
 
-        // Process each server
-        for (const [serverId, serverScripts] of scriptsByServer.entries()) {
-          try {
-            const server = allServers.find((s: any) => s.id === serverId);
-            if (!server) {
-              // Server doesn't exist, delete all scripts for this server
-              for (const scriptData of serverScripts) {
-                await db.deleteInstalledScript(Number(scriptData.id));
-                deletedScripts.push(String(scriptData.script_name));
-              }
-              continue;
-            }
+          // Test SSH connection
+          const connectionTest = await sshService.testSSHConnection(
+            server as Server,
+          );
+          if (!(connectionTest as any).success) {
+            console.warn(
+              `cleanupOrphanedScripts: SSH connection failed for server ${String((server as any).name)}, skipping ${serverScripts.length} scripts`,
+            );
+            continue;
+          }
 
-            // Test SSH connection
-            const connectionTest = await sshService.testSSHConnection(server as Server);
-            if (!(connectionTest as any).success) {
-              console.warn(`cleanupOrphanedScripts: SSH connection failed for server ${String((server as any).name)}, skipping ${serverScripts.length} scripts`);
-              continue;
-            }
+          // Helper function to parse list output and extract IDs
+          const parseListOutput = (output: string): Set<string> => {
+            const ids = new Set<string>();
+            const lines = output.split("\n").filter((line) => line.trim());
 
-            // Helper function to parse list output and extract IDs
-            const parseListOutput = (output: string): Set<string> => {
-              const ids = new Set<string>();
-              const lines = output.split('\n').filter(line => line.trim());
-              
-              for (const line of lines) {
-                // Skip header lines
-                if (line.includes('VMID') || line.includes('CTID')) continue;
-                
-                // Extract first column (ID)
-                const parts = line.trim().split(/\s+/);
-                if (parts.length > 0) {
-                  const id = parts[0]?.trim();
-                  // Validate ID format (3-4 digits typically)
-                  if (id && /^\d{3,4}$/.test(id)) {
-                    ids.add(id);
-                  }
+            for (const line of lines) {
+              // Skip header lines
+              if (line.includes("VMID") || line.includes("CTID")) continue;
+
+              // Extract first column (ID)
+              const parts = line.trim().split(/\s+/);
+              if (parts.length > 0) {
+                const id = parts[0]?.trim();
+                // Validate ID format (3-4 digits typically)
+                if (id && /^\d{3,4}$/.test(id)) {
+                  ids.add(id);
                 }
               }
-              
-              return ids;
-            };
+            }
 
-            // Get all existing containers from pct list
-            let pctOutput = '';
-            const existingContainerIds = await new Promise<Set<string>>((resolve) => {
+            return ids;
+          };
+
+          // Get all existing containers from pct list
+          let pctOutput = "";
+          const existingContainerIds = await new Promise<Set<string>>(
+            (resolve) => {
               const timeout = setTimeout(() => {
-                console.warn(`cleanupOrphanedScripts: timeout while getting container list from server ${String((server as any).name)}`);
+                console.warn(
+                  `cleanupOrphanedScripts: timeout while getting container list from server ${String((server as any).name)}`,
+                );
                 resolve(new Set()); // Treat timeout as no containers found
               }, 20000);
 
               void sshExecutionService.executeCommand(
                 server as Server,
-                'pct list',
+                "pct list",
                 (data: string) => {
                   pctOutput += data;
                 },
                 (error: string) => {
-                  console.error(`cleanupOrphanedScripts: error getting container list from server ${String((server as any).name)}:`, error);
+                  console.error(
+                    `cleanupOrphanedScripts: error getting container list from server ${String((server as any).name)}:`,
+                    error,
+                  );
                   clearTimeout(timeout);
                   resolve(new Set()); // Treat error as no containers found
                 },
                 (_exitCode: number) => {
                   clearTimeout(timeout);
                   resolve(parseListOutput(pctOutput));
-                }
-              );
-            });
-
-            // Get all existing VMs from qm list
-            let qmOutput = '';
-            const existingVMIds = await new Promise<Set<string>>((resolve) => {
-              const timeout = setTimeout(() => {
-                console.warn(`cleanupOrphanedScripts: timeout while getting VM list from server ${String((server as any).name)}`);
-                resolve(new Set()); // Treat timeout as no VMs found
-              }, 20000);
-
-              void sshExecutionService.executeCommand(
-                server as Server,
-                'qm list',
-                (data: string) => {
-                  qmOutput += data;
                 },
-                (error: string) => {
-                  console.error(`cleanupOrphanedScripts: error getting VM list from server ${String((server as any).name)}:`, error);
-                  clearTimeout(timeout);
-                  resolve(new Set()); // Treat error as no VMs found
-                },
-                (_exitCode: number) => {
-                  clearTimeout(timeout);
-                  resolve(parseListOutput(qmOutput));
-                }
               );
-            });
+            },
+          );
 
-            // Combine both sets - an ID exists if it's in either list
-            const existingIds = new Set<string>([...existingContainerIds, ...existingVMIds]);
+          // Get all existing VMs from qm list
+          let qmOutput = "";
+          const existingVMIds = await new Promise<Set<string>>((resolve) => {
+            const timeout = setTimeout(() => {
+              console.warn(
+                `cleanupOrphanedScripts: timeout while getting VM list from server ${String((server as any).name)}`,
+              );
+              resolve(new Set()); // Treat timeout as no VMs found
+            }, 20000);
 
-            // Check each script against the list of existing containers and VMs
-            for (const scriptData of serverScripts) {
-              try {
-                const containerId = String(scriptData.container_id).trim();
-                
-                // Check if ID exists in either pct list (containers) or qm list (VMs)
-                if (!existingIds.has(containerId)) {
-                  // Also verify config file doesn't exist as a double-check (node-specific paths)
-                  const nodeName = (server as Server).name;
-                  const checkContainerCommand = `test -f "/etc/pve/nodes/${nodeName}/lxc/${containerId}.conf" && echo "exists" || echo "not_found"`;
-                  const checkVMCommand = `test -f "/etc/pve/nodes/${nodeName}/qemu-server/${containerId}.conf" && echo "exists" || echo "not_found"`;
-                  
-                  const configExists = await new Promise<boolean>((resolve) => {
-                    let combinedOutput = '';
-                    let resolved = false;
-                    let checksCompleted = 0;
+            void sshExecutionService.executeCommand(
+              server as Server,
+              "qm list",
+              (data: string) => {
+                qmOutput += data;
+              },
+              (error: string) => {
+                console.error(
+                  `cleanupOrphanedScripts: error getting VM list from server ${String((server as any).name)}:`,
+                  error,
+                );
+                clearTimeout(timeout);
+                resolve(new Set()); // Treat error as no VMs found
+              },
+              (_exitCode: number) => {
+                clearTimeout(timeout);
+                resolve(parseListOutput(qmOutput));
+              },
+            );
+          });
 
-                    const finish = () => {
-                      if (resolved) return;
-                      checksCompleted++;
-                      if (checksCompleted === 2) {
-                        resolved = true;
-                        clearTimeout(timer);
-                        const out = combinedOutput.trim();
-                        resolve(out.includes('exists'));
-                      }
-                    };
+          // Combine both sets - an ID exists if it's in either list
+          const existingIds = new Set<string>([
+            ...existingContainerIds,
+            ...existingVMIds,
+          ]);
 
-                    const timer = setTimeout(() => {
-                      if (!resolved) {
-                        resolved = true;
-                        const out = combinedOutput.trim();
-                        resolve(out.includes('exists'));
-                      }
-                    }, 10000);
+          // Check each script against the list of existing containers and VMs
+          for (const scriptData of serverScripts) {
+            try {
+              const containerId = String(scriptData.container_id).trim();
 
-                    // Check container config
-                    void sshExecutionService.executeCommand(
-                      server as Server,
-                      checkContainerCommand,
-                      (data: string) => {
-                        combinedOutput += data;
-                      },
-                      (_error: string) => {
-                        // Ignore errors, just check output
-                      },
-                      (_exitCode: number) => {
-                        finish();
-                      }
-                    );
+              // Check if ID exists in either pct list (containers) or qm list (VMs)
+              if (!existingIds.has(containerId)) {
+                // Also verify config file doesn't exist as a double-check (node-specific paths)
+                const nodeName = (server as Server).name;
+                const checkContainerCommand = `test -f "/etc/pve/nodes/${nodeName}/lxc/${containerId}.conf" && echo "exists" || echo "not_found"`;
+                const checkVMCommand = `test -f "/etc/pve/nodes/${nodeName}/qemu-server/${containerId}.conf" && echo "exists" || echo "not_found"`;
 
-                    // Check VM config
-                    void sshExecutionService.executeCommand(
-                      server as Server,
-                      checkVMCommand,
-                      (data: string) => {
-                        combinedOutput += data;
-                      },
-                      (_error: string) => {
-                        // Ignore errors, just check output
-                      },
-                      (_exitCode: number) => {
-                        finish();
-                      }
-                    );
-                  });
+                const configExists = await new Promise<boolean>((resolve) => {
+                  let combinedOutput = "";
+                  let resolved = false;
+                  let checksCompleted = 0;
 
-                  // If ID is not in either list AND config file doesn't exist, it's orphaned
-                  if (!configExists) {
-                    console.log(`cleanupOrphanedScripts: Removing orphaned script ${String(scriptData.script_name)} (ID ${containerId}) from server ${String((server as any).name)}`);
-                    await db.deleteInstalledScript(Number(scriptData.id));
-                    deletedScripts.push(String(scriptData.script_name));
-                  } else {
-                    // Config exists but not in lists - might be in a transitional state, log but don't delete
-                    console.warn(`cleanupOrphanedScripts: Container/VM ${containerId} (${String(scriptData.script_name)}) config exists but not in pct/qm list - may be in transitional state`);
-                  }
+                  const finish = () => {
+                    if (resolved) return;
+                    checksCompleted++;
+                    if (checksCompleted === 2) {
+                      resolved = true;
+                      clearTimeout(timer);
+                      const out = combinedOutput.trim();
+                      resolve(out.includes("exists"));
+                    }
+                  };
+
+                  const timer = setTimeout(() => {
+                    if (!resolved) {
+                      resolved = true;
+                      const out = combinedOutput.trim();
+                      resolve(out.includes("exists"));
+                    }
+                  }, 10000);
+
+                  // Check container config
+                  void sshExecutionService.executeCommand(
+                    server as Server,
+                    checkContainerCommand,
+                    (data: string) => {
+                      combinedOutput += data;
+                    },
+                    (_error: string) => {
+                      // Ignore errors, just check output
+                    },
+                    (_exitCode: number) => {
+                      finish();
+                    },
+                  );
+
+                  // Check VM config
+                  void sshExecutionService.executeCommand(
+                    server as Server,
+                    checkVMCommand,
+                    (data: string) => {
+                      combinedOutput += data;
+                    },
+                    (_error: string) => {
+                      // Ignore errors, just check output
+                    },
+                    (_exitCode: number) => {
+                      finish();
+                    },
+                  );
+                });
+
+                // If ID is not in either list AND config file doesn't exist, it's orphaned
+                if (!configExists) {
+                  console.log(
+                    `cleanupOrphanedScripts: Removing orphaned script ${String(scriptData.script_name)} (ID ${containerId}) from server ${String((server as any).name)}`,
+                  );
+                  await db.deleteInstalledScript(Number(scriptData.id));
+                  deletedScripts.push(String(scriptData.script_name));
+                } else {
+                  // Config exists but not in lists - might be in a transitional state, log but don't delete
+                  console.warn(
+                    `cleanupOrphanedScripts: Container/VM ${containerId} (${String(scriptData.script_name)}) config exists but not in pct/qm list - may be in transitional state`,
+                  );
                 }
-              } catch (error) {
-                console.error(`cleanupOrphanedScripts: Error checking script ${String((scriptData as any).script_name)}:`, error);
               }
+            } catch (error) {
+              console.error(
+                `cleanupOrphanedScripts: Error checking script ${String(scriptData.script_name)}:`,
+                error,
+              );
             }
-          } catch (error) {
-            console.error(`cleanupOrphanedScripts: Error processing server ${serverId}:`, error);
           }
+        } catch (error) {
+          console.error(
+            `cleanupOrphanedScripts: Error processing server ${serverId}:`,
+            error,
+          );
         }
-
-
-        return {
-          success: true,
-          message: `Cleanup completed. ${deletedScripts.length} orphaned script(s) removed.`,
-          deletedCount: deletedScripts.length,
-          deletedScripts: deletedScripts
-        };
-      } catch (error) {
-        console.error('Error in cleanupOrphanedScripts:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to cleanup orphaned scripts',
-          deletedCount: 0,
-          deletedScripts: []
-        };
       }
-    }),
+
+      return {
+        success: true,
+        message: `Cleanup completed. ${deletedScripts.length} orphaned script(s) removed.`,
+        deletedCount: deletedScripts.length,
+        deletedScripts: deletedScripts,
+      };
+    } catch (error) {
+      console.error("Error in cleanupOrphanedScripts:", error);
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to cleanup orphaned scripts",
+        deletedCount: 0,
+        deletedScripts: [],
+      };
+    }
+  }),
 
   // Get container running statuses
   getContainerStatuses: publicProcedure
-    .input(z.object({ 
-      serverIds: z.array(z.number()).optional() // Optional: check specific servers, or all if empty
-    }))
+    .input(
+      z.object({
+        serverIds: z.array(z.number()).optional(), // Optional: check specific servers, or all if empty
+      }),
+    )
     .mutation(async ({ input }) => {
       try {
-        
         const db = getDatabase();
         const allServers = await db.getAllServers();
-        const statusMap: Record<string, 'running' | 'stopped' | 'unknown'> = {};
+        const statusMap: Record<string, "running" | "stopped" | "unknown"> = {};
 
         // Import SSH services
-        const { default: SSHService } = await import('~/server/ssh-service');
-        const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
+        const { default: SSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshService = new SSHService();
         const sshExecutionService = new SSHExecutionService();
 
         // Determine which servers to check
-        const serversToCheck = input.serverIds 
-          ? allServers.filter((s: any) => input.serverIds!.includes(Number(s.id)))
+        const serversToCheck = input.serverIds
+          ? allServers.filter((s: any) =>
+              input.serverIds!.includes(Number(s.id)),
+            )
           : allServers;
-
 
         // Check status for each server
         for (const server of serversToCheck) {
           try {
-
             // Test SSH connection
-             
-            const connectionTest = await sshService.testSSHConnection(server as Server);
+
+            const connectionTest = await sshService.testSSHConnection(
+              server as Server,
+            );
             if (!(connectionTest as any).success) {
               continue;
             }
 
             // Helper function to parse list output and extract statuses
-            const parseListStatuses = (output: string): Record<string, 'running' | 'stopped' | 'unknown'> => {
-              const statuses: Record<string, 'running' | 'stopped' | 'unknown'> = {};
-              const lines = output.split('\n').filter(line => line.trim());
-              
+            const parseListStatuses = (
+              output: string,
+            ): Record<string, "running" | "stopped" | "unknown"> => {
+              const statuses: Record<
+                string,
+                "running" | "stopped" | "unknown"
+              > = {};
+              const lines = output.split("\n").filter((line) => line.trim());
+
               // Find header line to determine column positions
               let statusColumnIndex = 1; // Default to second column
               for (const line of lines) {
-                if (line.includes('STATUS')) {
+                if (line.includes("STATUS")) {
                   // Parse header to find STATUS column index
                   const headerParts = line.trim().split(/\s+/);
-                  const statusIndex = headerParts.findIndex(part => part.includes('STATUS'));
+                  const statusIndex = headerParts.findIndex((part) =>
+                    part.includes("STATUS"),
+                  );
                   if (statusIndex >= 0) {
                     statusColumnIndex = statusIndex;
                   }
                   break;
                 }
               }
-              
+
               for (const line of lines) {
                 // Skip header lines
-                if (line.includes('VMID') || line.includes('CTID') || line.includes('STATUS')) continue;
-                
+                if (
+                  line.includes("VMID") ||
+                  line.includes("CTID") ||
+                  line.includes("STATUS")
+                )
+                  continue;
+
                 // Parse line
                 const parts = line.trim().split(/\s+/);
                 if (parts.length > statusColumnIndex) {
                   const id = parts[0]?.trim();
                   const status = parts[statusColumnIndex]?.trim().toLowerCase();
-                  
-                  if (id && /^\d+$/.test(id)) { // Validate ID is numeric
+
+                  if (id && /^\d+$/.test(id)) {
+                    // Validate ID is numeric
                     // Map status to our status format
-                    let mappedStatus: 'running' | 'stopped' | 'unknown' = 'unknown';
-                    if (status === 'running') {
-                      mappedStatus = 'running';
-                    } else if (status === 'stopped') {
-                      mappedStatus = 'stopped';
+                    let mappedStatus: "running" | "stopped" | "unknown" =
+                      "unknown";
+                    if (status === "running") {
+                      mappedStatus = "running";
+                    } else if (status === "stopped") {
+                      mappedStatus = "stopped";
                     }
                     // All other statuses (paused, locked, suspended, etc.) map to 'unknown'
-                    
+
                     statuses[id] = mappedStatus;
                   }
                 }
               }
-              
+
               return statuses;
             };
 
             // Run pct list to get all container statuses
-            let pctOutput = '';
-            
+            let pctOutput = "";
+
             // Add timeout to prevent hanging connections
             const timeoutPromise = new Promise<never>((_, reject) => {
-              setTimeout(() => reject(new Error('SSH command timeout after 30 seconds')), 30000);
+              setTimeout(
+                () => reject(new Error("SSH command timeout after 30 seconds")),
+                30000,
+              );
             });
-            
+
             try {
               await Promise.race([
                 new Promise<void>((resolve, _reject) => {
                   void sshExecutionService.executeCommand(
                     server as Server,
-                    'pct list',
+                    "pct list",
                     (data: string) => {
                       pctOutput += data;
                     },
                     (error: string) => {
-                      console.error(`pct list error on server ${(server as any).name}:`, error);
+                      console.error(
+                        `pct list error on server ${(server as any).name}:`,
+                        error,
+                      );
                       // Don't reject, just continue with empty output
                       resolve();
                     },
                     (_exitCode: number) => {
                       resolve();
-                    }
+                    },
                   );
                 }),
-                timeoutPromise
+                timeoutPromise,
               ]);
             } catch (error) {
-              console.error(`Timeout or error getting pct list from server ${(server as any).name}:`, error);
+              console.error(
+                `Timeout or error getting pct list from server ${(server as any).name}:`,
+                error,
+              );
             }
 
             // Run qm list to get all VM statuses
-            let qmOutput = '';
-            
+            let qmOutput = "";
+
             try {
               await Promise.race([
                 new Promise<void>((resolve, _reject) => {
                   void sshExecutionService.executeCommand(
                     server as Server,
-                    'qm list',
+                    "qm list",
                     (data: string) => {
                       qmOutput += data;
                     },
                     (error: string) => {
-                      console.error(`qm list error on server ${(server as any).name}:`, error);
+                      console.error(
+                        `qm list error on server ${(server as any).name}:`,
+                        error,
+                      );
                       // Don't reject, just continue with empty output
                       resolve();
                     },
                     (_exitCode: number) => {
                       resolve();
-                    }
+                    },
                   );
                 }),
-                timeoutPromise
+                timeoutPromise,
               ]);
             } catch (error) {
-              console.error(`Timeout or error getting qm list from server ${(server as any).name}:`, error);
+              console.error(
+                `Timeout or error getting qm list from server ${(server as any).name}:`,
+                error,
+              );
             }
 
             // Parse both outputs and combine into statusMap
             const containerStatuses = parseListStatuses(pctOutput);
             const vmStatuses = parseListStatuses(qmOutput);
-            
+
             // Merge both status maps (VMs will overwrite containers if same ID, but that's unlikely)
-            Object.assign(statusMap, containerStatuses, vmStatuses);
+            for (const [id, status] of Object.entries(containerStatuses)) {
+              statusMap[`${(server as any).id}:${id}`] = status;
+            }
+            for (const [id, status] of Object.entries(vmStatuses)) {
+              statusMap[`${(server as any).id}:${id}`] = status;
+            }
           } catch (error) {
-            console.error(`Error processing server ${(server as any).name}:`, error);
+            console.error(
+              `Error processing server ${(server as any).name}:`,
+              error,
+            );
           }
         }
 
-
         return {
           success: true,
-          statusMap
+          statusMap,
         };
       } catch (error) {
-        console.error('Error in getContainerStatuses:', error);
+        console.error("Error in getContainerStatuses:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to fetch container statuses',
-          statusMap: {}
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch container statuses",
+          statusMap: {},
         };
       }
     }),
@@ -1594,23 +1886,27 @@ export const installedScriptsRouter = createTRPCRouter({
       try {
         const db = getDatabase();
         const script = await db.getInstalledScriptById(input.id);
-        
+
         if (!script) {
           return {
             success: false,
-            error: 'Script not found',
-            status: 'unknown' as const
+            error: "Script not found",
+            status: "unknown" as const,
           };
         }
 
         const scriptData = script as any;
-        
+
         // Only check status for SSH scripts with container_id
-        if (scriptData.execution_mode !== 'ssh' || !scriptData.server_id || !scriptData.container_id) {
+        if (
+          scriptData.execution_mode !== "ssh" ||
+          !scriptData.server_id ||
+          !scriptData.container_id
+        ) {
           return {
             success: false,
-            error: 'Script is not an SSH script with container ID',
-            status: 'unknown' as const
+            error: "Script is not an SSH script with container ID",
+            status: "unknown" as const,
           };
         }
 
@@ -1619,103 +1915,118 @@ export const installedScriptsRouter = createTRPCRouter({
         if (!server) {
           return {
             success: false,
-            error: 'Server not found',
-            status: 'unknown' as const
+            error: "Server not found",
+            status: "unknown" as const,
           };
         }
 
         // Import SSH services
-        const { default: SSHService } = await import('~/server/ssh-service');
-        const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
+        const { default: SSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshService = new SSHService();
         const sshExecutionService = new SSHExecutionService();
 
         // Test SSH connection first
-         
-        const connectionTest = await sshService.testSSHConnection(server as Server);
+
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
         if (!(connectionTest as any).success) {
           return {
             success: false,
-            error: `SSH connection failed: ${(connectionTest as any).error ?? 'Unknown error'}`,
-            status: 'unknown' as const
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
+            status: "unknown" as const,
           };
         }
 
         // Determine if it's a VM or LXC
-        const vm = await isVM(input.id, scriptData.container_id, scriptData.server_id);
-        
+        const vm = await isVM(
+          input.id,
+          scriptData.container_id,
+          scriptData.server_id,
+        );
+
         // Check container status (use qm for VMs, pct for LXC)
-        const statusCommand = vm 
+        const statusCommand = vm
           ? `qm status ${scriptData.container_id}`
           : `pct status ${scriptData.container_id}`;
-        let statusOutput = '';
-        
+        let statusOutput = "";
+
         await new Promise<void>((resolve, reject) => {
           void sshExecutionService.executeCommand(
-             
             server as Server,
             statusCommand,
             (data: string) => {
               statusOutput += data;
             },
             (error: string) => {
-              console.error('Status command error:', error);
+              console.error("Status command error:", error);
               reject(new Error(error));
             },
             (_exitCode: number) => {
               resolve();
-            }
+            },
           );
         });
 
         // Parse status from output
-        let status: 'running' | 'stopped' | 'unknown' = 'unknown';
-        if (statusOutput.includes('status: running')) {
-          status = 'running';
-        } else if (statusOutput.includes('status: stopped')) {
-          status = 'stopped';
+        let status: "running" | "stopped" | "unknown" = "unknown";
+        if (statusOutput.includes("status: running")) {
+          status = "running";
+        } else if (statusOutput.includes("status: stopped")) {
+          status = "stopped";
         }
 
         return {
           success: true,
           status,
-          error: undefined
+          error: undefined,
         };
       } catch (error) {
-        console.error('Error in getContainerStatus:', error);
+        console.error("Error in getContainerStatus:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to get container status',
-          status: 'unknown' as const
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to get container status",
+          status: "unknown" as const,
         };
       }
     }),
 
   // Control container (start/stop)
   controlContainer: publicProcedure
-    .input(z.object({ 
-      id: z.number(), 
-      action: z.enum(['start', 'stop']) 
-    }))
+    .input(
+      z.object({
+        id: z.number(),
+        action: z.enum(["start", "stop", "restart", "reboot"]),
+      }),
+    )
     .mutation(async ({ input }) => {
       try {
         const db = getDatabase();
         const script = await db.getInstalledScriptById(input.id);
-        
+
         if (!script) {
           return {
             success: false,
-            error: 'Script not found'
+            error: "Script not found",
           };
         }
 
         const scriptData = script as any;
-        
+
         // Only control SSH scripts with container_id
-        if (scriptData.execution_mode !== 'ssh' || !scriptData.server_id || !scriptData.container_id) {
+        if (
+          scriptData.execution_mode !== "ssh" ||
+          !scriptData.server_id ||
+          !scriptData.container_id
+        ) {
           return {
             success: false,
-            error: 'Script is not an SSH script with container ID'
+            error: "Script is not an SSH script with container ID",
           };
         }
 
@@ -1724,39 +2035,57 @@ export const installedScriptsRouter = createTRPCRouter({
         if (!server) {
           return {
             success: false,
-            error: 'Server not found'
+            error: "Server not found",
           };
         }
 
         // Import SSH services
-        const { default: SSHService } = await import('~/server/ssh-service');
-        const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
+        const { default: SSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshService = new SSHService();
         const sshExecutionService = new SSHExecutionService();
 
         // Test SSH connection first
-         
-        const connectionTest = await sshService.testSSHConnection(server as Server);
+
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
         if (!(connectionTest as any).success) {
           return {
             success: false,
-            error: `SSH connection failed: ${(connectionTest as any).error ?? 'Unknown error'}`
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
           };
         }
 
         // Determine if it's a VM or LXC
-        const vm = await isVM(input.id, scriptData.container_id, scriptData.server_id);
-        
+        const vm = await isVM(
+          input.id,
+          scriptData.container_id,
+          scriptData.server_id,
+        );
+
+        // Map action to correct pct/qm sub-command
+        // pct supports: start, stop, restart
+        // qm supports:  start, stop, reset (hard reboot), reboot (graceful)
+        let subCommand: string;
+        if (input.action === "restart") {
+          subCommand = vm ? "reset" : "restart";
+        } else if (input.action === "reboot") {
+          subCommand = vm ? "reboot" : "restart";
+        } else {
+          subCommand = input.action; // start | stop
+        }
+
         // Execute control command (use qm for VMs, pct for LXC)
         const controlCommand = vm
-          ? `qm ${input.action} ${scriptData.container_id}`
-          : `pct ${input.action} ${scriptData.container_id}`;
-        let commandOutput = '';
-        let commandError = '';
-        
+          ? `qm ${subCommand} ${scriptData.container_id}`
+          : `pct ${subCommand} ${scriptData.container_id}`;
+        let commandOutput = "";
+        let commandError = "";
+
         await new Promise<void>((resolve, reject) => {
           void sshExecutionService.executeCommand(
-             
             server as Server,
             controlCommand,
             (data: string) => {
@@ -1767,25 +2096,32 @@ export const installedScriptsRouter = createTRPCRouter({
             },
             (exitCode: number) => {
               if (exitCode !== 0) {
-                const errorMessage = commandError || commandOutput || `Command failed with exit code ${exitCode}`;
+                const errorMessage =
+                  commandError ||
+                  commandOutput ||
+                  `Command failed with exit code ${exitCode}`;
                 reject(new Error(errorMessage));
               } else {
                 resolve();
               }
-            }
+            },
           );
         });
 
         return {
           success: true,
-          message: `Container ${scriptData.container_id} ${input.action} command executed successfully`,
-          containerId: scriptData.container_id
+          message: `Container ${scriptData.container_id} ${input.action} executed successfully`,
+          containerId: scriptData.container_id,
+          action: input.action,
         };
       } catch (error) {
-        console.error('Error in controlContainer:', error);
+        console.error("Error in controlContainer:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to control container'
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to control container",
         };
       }
     }),
@@ -1797,21 +2133,25 @@ export const installedScriptsRouter = createTRPCRouter({
       try {
         const db = getDatabase();
         const script = await db.getInstalledScriptById(input.id);
-        
+
         if (!script) {
           return {
             success: false,
-            error: 'Script not found'
+            error: "Script not found",
           };
         }
 
         const scriptData = script as any;
-        
+
         // Only destroy SSH scripts with container_id
-        if (scriptData.execution_mode !== 'ssh' || !scriptData.server_id || !scriptData.container_id) {
+        if (
+          scriptData.execution_mode !== "ssh" ||
+          !scriptData.server_id ||
+          !scriptData.container_id
+        ) {
           return {
             success: false,
-            error: 'Script is not an SSH script with container ID'
+            error: "Script is not an SSH script with container ID",
           };
         }
 
@@ -1820,39 +2160,45 @@ export const installedScriptsRouter = createTRPCRouter({
         if (!server) {
           return {
             success: false,
-            error: 'Server not found'
+            error: "Server not found",
           };
         }
 
         // Import SSH services
-        const { default: SSHService } = await import('~/server/ssh-service');
-        const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
+        const { default: SSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshService = new SSHService();
         const sshExecutionService = new SSHExecutionService();
 
         // Test SSH connection first
-         
-        const connectionTest = await sshService.testSSHConnection(server as Server);
+
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
         if (!(connectionTest as any).success) {
           return {
             success: false,
-            error: `SSH connection failed: ${(connectionTest as any).error ?? 'Unknown error'}`
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
           };
         }
 
         // Determine if it's a VM or LXC
-        const vm = await isVM(input.id, scriptData.container_id, scriptData.server_id);
-        
+        const vm = await isVM(
+          input.id,
+          scriptData.container_id,
+          scriptData.server_id,
+        );
+
         // First check if container is running and stop it if necessary
         const statusCommand = vm
           ? `qm status ${scriptData.container_id}`
           : `pct status ${scriptData.container_id}`;
-        let statusOutput = '';
-        
+        let statusOutput = "";
+
         try {
           await new Promise<void>((resolve, reject) => {
             void sshExecutionService.executeCommand(
-               
               server as Server,
               statusCommand,
               (data: string) => {
@@ -1863,22 +2209,21 @@ export const installedScriptsRouter = createTRPCRouter({
               },
               (_exitCode: number) => {
                 resolve();
-              }
+              },
             );
           });
 
           // Check if container is running
-          if (statusOutput.includes('status: running')) {
+          if (statusOutput.includes("status: running")) {
             // Stop the container first (use qm for VMs, pct for LXC)
             const stopCommand = vm
               ? `qm stop ${scriptData.container_id}`
               : `pct stop ${scriptData.container_id}`;
-            let stopOutput = '';
-            let stopError = '';
-            
+            let stopOutput = "";
+            let stopError = "";
+
             await new Promise<void>((resolve, reject) => {
               void sshExecutionService.executeCommand(
-                 
                 server as Server,
                 stopCommand,
                 (data: string) => {
@@ -1889,29 +2234,31 @@ export const installedScriptsRouter = createTRPCRouter({
                 },
                 (exitCode: number) => {
                   if (exitCode !== 0) {
-                    const errorMessage = stopError || stopOutput || `Stop command failed with exit code ${exitCode}`;
-                    reject(new Error(`Failed to stop container: ${errorMessage}`));
+                    const errorMessage =
+                      stopError ||
+                      stopOutput ||
+                      `Stop command failed with exit code ${exitCode}`;
+                    reject(
+                      new Error(`Failed to stop container: ${errorMessage}`),
+                    );
                   } else {
                     resolve();
                   }
-                }
+                },
               );
             });
           }
-        } catch {
-
-        }
+        } catch {}
 
         // Execute destroy command (use qm for VMs, pct for LXC)
         const destroyCommand = vm
           ? `qm destroy ${scriptData.container_id}`
           : `pct destroy ${scriptData.container_id}`;
-        let commandOutput = '';
-        let commandError = '';
-        
+        let commandOutput = "";
+        let commandError = "";
+
         await new Promise<void>((resolve, reject) => {
           void sshExecutionService.executeCommand(
-             
             server as Server,
             destroyCommand,
             (data: string) => {
@@ -1922,40 +2269,46 @@ export const installedScriptsRouter = createTRPCRouter({
             },
             (exitCode: number) => {
               if (exitCode !== 0) {
-                const errorMessage = commandError || commandOutput || `Destroy command failed with exit code ${exitCode}`;
+                const errorMessage =
+                  commandError ||
+                  commandOutput ||
+                  `Destroy command failed with exit code ${exitCode}`;
                 reject(new Error(errorMessage));
               } else {
                 resolve();
               }
-            }
+            },
           );
         });
 
         // If destroy was successful, delete the database record
         const deleteResult = await db.deleteInstalledScript(input.id);
-        
+
         if (!deleteResult) {
           return {
             success: false,
-            error: 'Container destroyed but failed to delete database record'
+            error: "Container destroyed but failed to delete database record",
           };
         }
 
         // Determine if container was stopped first
-        const wasStopped = statusOutput.includes('status: running');
-        const message = wasStopped 
+        const wasStopped = statusOutput.includes("status: running");
+        const message = wasStopped
           ? `Container ${scriptData.container_id} stopped and destroyed successfully, database record deleted`
           : `Container ${scriptData.container_id} destroyed successfully, database record deleted`;
 
         return {
           success: true,
-          message
+          message,
         };
       } catch (error) {
-        console.error('Error in destroyContainer:', error);
+        console.error("Error in destroyContainer:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to destroy container'
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to destroy container",
         };
       }
     }),
@@ -1965,109 +2318,128 @@ export const installedScriptsRouter = createTRPCRouter({
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       try {
-        console.log('🔍 Auto-detect WebUI called with id:', input.id);
+        console.log("🔍 Auto-detect WebUI called with id:", input.id);
         const db = getDatabase();
         const script = await db.getInstalledScriptById(input.id);
-        
+
         if (!script) {
-          console.log('❌ Script not found for id:', input.id);
+          console.log("❌ Script not found for id:", input.id);
           return {
             success: false,
-            error: 'Script not found'
+            error: "Script not found",
           };
         }
 
         const scriptData = script as any;
-        console.log('📋 Script data:', {
+        console.log("📋 Script data:", {
           id: scriptData.id,
           execution_mode: scriptData.execution_mode,
           server_id: scriptData.server_id,
-          container_id: scriptData.container_id
+          container_id: scriptData.container_id,
         });
-        
+
         // Only works for SSH mode scripts with container_id
-        if (scriptData.execution_mode !== 'ssh' || !scriptData.server_id || !scriptData.container_id) {
-          console.log('❌ Validation failed - not SSH mode or missing server/container ID');
+        if (
+          scriptData.execution_mode !== "ssh" ||
+          !scriptData.server_id ||
+          !scriptData.container_id
+        ) {
+          console.log(
+            "❌ Validation failed - not SSH mode or missing server/container ID",
+          );
           return {
             success: false,
-            error: 'Auto-detect only works for SSH mode scripts with container ID'
+            error:
+              "Auto-detect only works for SSH mode scripts with container ID",
           };
         }
 
         // Get server info
         const server = await db.getServerById(Number(scriptData.server_id));
         if (!server) {
-          console.log('❌ Server not found for id:', scriptData.server_id);
+          console.log("❌ Server not found for id:", scriptData.server_id);
           return {
             success: false,
-            error: 'Server not found'
+            error: "Server not found",
           };
         }
 
-        console.log('🖥️ Server found:', { id: (server as any).id, name: (server as any).name, ip: (server as any).ip });
+        console.log("🖥️ Server found:", {
+          id: (server as any).id,
+          name: (server as any).name,
+          ip: (server as any).ip,
+        });
 
         // Import SSH services
-        const { default: SSHService } = await import('~/server/ssh-service');
-        const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
+        const { default: SSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshService = new SSHService();
         const sshExecutionService = new SSHExecutionService();
 
         // Test SSH connection first
-        console.log('🔌 Testing SSH connection...');
-         
-        const connectionTest = await sshService.testSSHConnection(server as Server);
+        console.log("🔌 Testing SSH connection...");
+
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
         if (!(connectionTest as any).success) {
-          console.log('❌ SSH connection failed:', (connectionTest as any).error);
+          console.log(
+            "❌ SSH connection failed:",
+            (connectionTest as any).error,
+          );
           return {
             success: false,
-            error: `SSH connection failed: ${(connectionTest as any).error ?? 'Unknown error'}`
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
           };
         }
 
-        console.log('✅ SSH connection successful');
+        console.log("✅ SSH connection successful");
 
         // Run hostname -I inside the container
         // Use pct exec instead of pct enter -c (which doesn't exist)
         const hostnameCommand = `pct exec ${scriptData.container_id} -- hostname -I`;
-        console.log('🚀 Running command:', hostnameCommand);
-        let commandOutput = '';
-        
+        console.log("🚀 Running command:", hostnameCommand);
+        let commandOutput = "";
+
         await new Promise<void>((resolve, reject) => {
           void sshExecutionService.executeCommand(
-             
             server as Server,
             hostnameCommand,
             (data: string) => {
-              console.log('📤 Command output chunk:', data);
+              console.log("📤 Command output chunk:", data);
               commandOutput += data;
             },
             (error: string) => {
-              console.log('❌ Command error:', error);
+              console.log("❌ Command error:", error);
               reject(new Error(error));
             },
             (exitCode: number) => {
-              console.log('🏁 Command finished with exit code:', exitCode);
+              console.log("🏁 Command finished with exit code:", exitCode);
               if (exitCode !== 0) {
                 reject(new Error(`Command failed with exit code ${exitCode}`));
               } else {
                 resolve();
               }
-            }
+            },
           );
         });
 
         // Parse output to get first IP address
-        console.log('📝 Full command output:', commandOutput);
+        console.log("📝 Full command output:", commandOutput);
         const ips = commandOutput.trim().split(/\s+/);
         const detectedIp = ips[0];
-        console.log('🔍 Parsed IPs:', ips);
-        console.log('🎯 Detected IP:', detectedIp);
-        
-        if (!detectedIp || !/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.exec(detectedIp)) {
-          console.log('❌ Invalid IP address detected:', detectedIp);
+        console.log("🔍 Parsed IPs:", ips);
+        console.log("🎯 Detected IP:", detectedIp);
+
+        if (
+          !detectedIp ||
+          !/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.exec(detectedIp)
+        ) {
+          console.log("❌ Invalid IP address detected:", detectedIp);
           return {
             success: false,
-            error: 'Could not detect valid IP address from container'
+            error: "Could not detect valid IP address from container",
           };
         }
 
@@ -2075,20 +2447,24 @@ export const installedScriptsRouter = createTRPCRouter({
         let slugFromUpdate: string | null = null;
         try {
           const updateCommand = `pct exec ${scriptData.container_id} -- cat /usr/bin/update 2>/dev/null`;
-          let updateOutput = '';
+          let updateOutput = "";
           await new Promise<void>((resolve) => {
             void sshExecutionService.executeCommand(
               server as Server,
               updateCommand,
-              (data: string) => { updateOutput += data; },
-              () => {},
-              () => resolve()
+              (data: string) => {
+                updateOutput += data;
+              },
+              (_stderr: string) => {
+                /* ignored */
+              },
+              () => resolve(),
             );
           });
           const ctSlugMatch = /ct\/([a-zA-Z0-9_.-]+)\.sh/.exec(updateOutput);
           if (ctSlugMatch?.[1]) {
             slugFromUpdate = ctSlugMatch[1].trim().toLowerCase();
-            console.log('🔍 Slug from /usr/bin/update:', slugFromUpdate);
+            console.log("🔍 Slug from /usr/bin/update:", slugFromUpdate);
           }
         } catch {
           // Container may not be from community-scripts; use hostname fallback
@@ -2098,10 +2474,13 @@ export const installedScriptsRouter = createTRPCRouter({
         let detectedPort = 80; // Default fallback
 
         try {
-          const { localScriptsService } = await import('~/server/services/localScripts');
+          const { localScriptsService } =
+            await import("~/server/services/localScripts");
           const allScripts = await localScriptsService.getAllScripts();
 
-          const nameFromHostname = scriptData.script_name.replace(/\.sh$/, '').toLowerCase();
+          const nameFromHostname = scriptData.script_name
+            .replace(/\.sh$/, "")
+            .toLowerCase();
 
           // Primary: slug from /usr/bin/update (community-scripts)
           let scriptMetadata =
@@ -2109,110 +2488,144 @@ export const installedScriptsRouter = createTRPCRouter({
               ? allScripts.find((s) => s.slug === slugFromUpdate)
               : undefined;
           if (scriptMetadata) {
-            console.log('🔍 Using slug from /usr/bin/update for metadata:', scriptMetadata.slug);
+            console.log(
+              "🔍 Using slug from /usr/bin/update for metadata:",
+              scriptMetadata.slug,
+            );
           }
 
           // Fallback: exact hostname then hostname ends with slug (longest wins)
           if (!scriptMetadata) {
-            scriptMetadata = allScripts.find((script) => script.slug === nameFromHostname);
+            scriptMetadata = allScripts.find(
+              (script) => script.slug === nameFromHostname,
+            );
             if (!scriptMetadata) {
-              const suffixMatches = allScripts.filter((script) => nameFromHostname.endsWith(script.slug));
+              const suffixMatches = allScripts.filter((script) =>
+                nameFromHostname.endsWith(script.slug),
+              );
               scriptMetadata =
                 suffixMatches.length > 0
-                  ? suffixMatches.reduce((a, b) => (a.slug.length >= b.slug.length ? a : b))
+                  ? suffixMatches.reduce((a, b) =>
+                      a.slug.length >= b.slug.length ? a : b,
+                    )
                   : undefined;
               if (scriptMetadata) {
-                console.log('🔍 Matched metadata by slug suffix in hostname:', scriptMetadata.slug);
+                console.log(
+                  "🔍 Matched metadata by slug suffix in hostname:",
+                  scriptMetadata.slug,
+                );
               }
             }
           }
 
           if (scriptMetadata?.interface_port) {
             detectedPort = scriptMetadata.interface_port;
-            console.log('📋 Found interface_port in metadata:', detectedPort);
+            console.log("📋 Found interface_port in metadata:", detectedPort);
           } else {
-            console.log('📋 No interface_port found in metadata, using default port 80');
+            console.log(
+              "📋 No interface_port found in metadata, using default port 80",
+            );
             detectedPort = 80;
           }
         } catch (error) {
-          console.log('⚠️ Error getting script metadata, using default port 80:', error);
+          console.log(
+            "⚠️ Error getting script metadata, using default port 80:",
+            error,
+          );
           detectedPort = 80;
         }
-        
-        console.log('🎯 Final detected port:', detectedPort);
-        
+
+        console.log("🎯 Final detected port:", detectedPort);
+
         // Update the database with detected IP and port
-        console.log('💾 Updating database with IP:', detectedIp, 'Port:', detectedPort);
+        console.log(
+          "💾 Updating database with IP:",
+          detectedIp,
+          "Port:",
+          detectedPort,
+        );
         const updateResult = await db.updateInstalledScript(input.id, {
           web_ui_ip: detectedIp,
-          web_ui_port: detectedPort
+          web_ui_port: detectedPort,
         });
 
         if (!updateResult) {
-          console.log('❌ Database update failed - no changes made');
+          console.log("❌ Database update failed - no changes made");
           return {
             success: false,
-            error: 'Failed to update database with detected IP'
+            error: "Failed to update database with detected IP",
           };
         }
 
-        console.log('✅ Successfully updated database');
+        console.log("✅ Successfully updated database");
         return {
           success: true,
           message: `Successfully detected IP: ${detectedIp}:${detectedPort} for LXC ${scriptData.container_id} on ${(server as any).name}`,
           detectedIp,
           detectedPort: detectedPort,
           containerId: scriptData.container_id,
-          serverName: (server as any).name
+          serverName: (server as any).name,
         };
       } catch (error) {
-        console.error('Error in autoDetectWebUI:', error);
+        console.error("Error in autoDetectWebUI:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to auto-detect Web UI IP'
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to auto-detect Web UI IP",
         };
       }
     }),
 
   // Get LXC configuration
   getLXCConfig: publicProcedure
-    .input(z.object({ 
-      scriptId: z.number(), 
-      forceSync: z.boolean().optional().default(false) 
-    }))
+    .input(
+      z.object({
+        scriptId: z.number(),
+        forceSync: z.boolean().optional().default(false),
+      }),
+    )
     .query(async ({ input }) => {
       try {
         const db = getDatabase();
         const script = await db.getInstalledScriptById(input.scriptId);
-        
+
         if (!script) {
           return {
             success: false,
-            error: 'Script not found'
+            error: "Script not found",
           };
         }
 
         if (!script.container_id || !script.server_id) {
           return {
             success: false,
-            error: 'Script does not have container ID or server ID'
+            error: "Script does not have container ID or server ID",
           };
         }
 
         // Check if we have cached config and it's recent (5 minutes)
         console.log("DB object in getLXCConfig:", Object.keys(db));
-        console.log("getLXCConfigByScriptId exists:", typeof db.getLXCConfigByScriptId);
+        console.log(
+          "getLXCConfigByScriptId exists:",
+          typeof db.getLXCConfigByScriptId,
+        );
         const cachedConfig = await db.getLXCConfigByScriptId(input.scriptId);
         const now = new Date();
         const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
-        
-        if (cachedConfig?.synced_at && cachedConfig.synced_at > fiveMinutesAgo && !input.forceSync) {
+
+        if (
+          cachedConfig?.synced_at &&
+          cachedConfig.synced_at > fiveMinutesAgo &&
+          !input.forceSync
+        ) {
           return {
             success: true,
             config: cachedConfig,
-            source: 'cache',
+            source: "cache",
             has_changes: false,
-            synced_at: cachedConfig.synced_at
+            synced_at: cachedConfig.synced_at,
           };
         }
 
@@ -2221,22 +2634,25 @@ export const installedScriptsRouter = createTRPCRouter({
         if (!server) {
           return {
             success: false,
-            error: 'Server not found'
+            error: "Server not found",
           };
         }
 
         // Import SSH services
-        const { default: SSHService } = await import('~/server/ssh-service');
-        const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
+        const { default: SSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshService = new SSHService();
         const sshExecutionService = new SSHExecutionService();
-        
+
         // Test SSH connection
-        const connectionTest = await sshService.testSSHConnection(server as Server);
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
         if (!(connectionTest as any).success) {
           return {
             success: false,
-            error: `SSH connection failed: ${(connectionTest as any).error ?? 'Unknown error'}`
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
           };
         }
 
@@ -2244,8 +2660,8 @@ export const installedScriptsRouter = createTRPCRouter({
         const nodeName = (server as Server).name;
         const configPath = `/etc/pve/nodes/${nodeName}/lxc/${script.container_id}.conf`;
         const readCommand = `cat "${configPath}" 2>/dev/null`;
-        let rawConfig = '';
-        
+        let rawConfig = "";
+
         await new Promise<void>((resolve, reject) => {
           void sshExecutionService.executeCommand(
             server as Server,
@@ -2262,72 +2678,85 @@ export const installedScriptsRouter = createTRPCRouter({
               } else {
                 reject(new Error(`Command failed with exit code ${exitCode}`));
               }
-            }
+            },
           );
         });
 
         // Parse config
         const parsedConfig = parseRawConfig(rawConfig);
         const configHash = calculateConfigHash(rawConfig);
-        
+
         // Check for changes if we have cached config
-        const hasChanges = cachedConfig ? cachedConfig.config_hash !== configHash : false;
-        
+        const hasChanges = cachedConfig
+          ? cachedConfig.config_hash !== configHash
+          : false;
+
         // Update database cache
-        const configData = {
+        const configData: Record<string, unknown> = {
           ...parsedConfig,
           config_hash: configHash,
-          synced_at: new Date()
+          synced_at: new Date(),
         };
-        
+
         await db.updateLXCConfig(input.scriptId, configData);
-        
+
         return {
           success: true,
           config: configData,
-          source: 'server',
+          source: "server",
           has_changes: hasChanges,
-          synced_at: configData.synced_at
+          synced_at: configData.synced_at,
         };
       } catch (error) {
-        console.error('Error in getLXCConfig:', error);
+        console.error("Error in getLXCConfig:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to get LXC config'
+          error:
+            error instanceof Error ? error.message : "Failed to get LXC config",
         };
       }
     }),
 
   // Save LXC configuration
   saveLXCConfig: publicProcedure
-    .input(z.object({ 
-      scriptId: z.number(), 
-      config: z.any() 
-    }))
+    .input(
+      z.object({
+        scriptId: z.number(),
+        config: z.any(),
+      }),
+    )
     .mutation(async ({ input }) => {
       try {
         const db = getDatabase();
         const script = await db.getInstalledScriptById(input.scriptId);
-        
+
         if (!script) {
           return {
             success: false,
-            error: 'Script not found'
+            error: "Script not found",
           };
         }
 
         if (!script.container_id || !script.server_id) {
           return {
             success: false,
-            error: 'Script does not have container ID or server ID'
+            error: "Script does not have container ID or server ID",
           };
         }
 
         // Validate required fields
-        if (!input.config.arch || !input.config.cores || !input.config.memory || !input.config.hostname || !input.config.ostype || !input.config.rootfs_storage) {
+        if (
+          !input.config.arch ||
+          !input.config.cores ||
+          !input.config.memory ||
+          !input.config.hostname ||
+          !input.config.ostype ||
+          !input.config.rootfs_storage
+        ) {
           return {
             success: false,
-            error: 'Missing required fields: arch, cores, memory, hostname, ostype, or rootfs_storage'
+            error:
+              "Missing required fields: arch, cores, memory, hostname, ostype, or rootfs_storage",
           };
         }
 
@@ -2340,35 +2769,42 @@ export const installedScriptsRouter = createTRPCRouter({
         if (!server) {
           return {
             success: false,
-            error: 'Server not found'
+            error: "Server not found",
           };
         }
 
         // Import SSH services
-        const { default: SSHService } = await import('~/server/ssh-service');
-        const { default: SSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
+        const { default: SSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshService = new SSHService();
         const sshExecutionService = new SSHExecutionService();
-        
+
         // Test SSH connection
-        const connectionTest = await sshService.testSSHConnection(server as Server);
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
         if (!(connectionTest as any).success) {
           return {
             success: false,
-            error: `SSH connection failed: ${(connectionTest as any).error ?? 'Unknown error'}`
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
           };
         }
 
         // Get current config for comparison
         const currentConfig = await db.getLXCConfigByScriptId(input.scriptId);
-        const oldSizeGB = currentConfig ? extractSizeInGB(String(currentConfig.rootfs_size ?? '0G')) : 0;
-        const newSizeGB = extractSizeInGB(String(input.config.rootfs_size ?? '0G'));
-        
+        const oldSizeGB = currentConfig
+          ? extractSizeInGB(String(currentConfig.rootfs_size ?? "0G"))
+          : 0;
+        const newSizeGB = extractSizeInGB(
+          String(input.config.rootfs_size ?? "0G"),
+        );
+
         // Validate size change - only allow increases
         if (newSizeGB < oldSizeGB) {
           return {
             success: false,
-            error: `Disk size cannot be decreased. Current size: ${oldSizeGB}G, requested size: ${newSizeGB}G. Only increases are allowed for safety.`
+            error: `Disk size cannot be decreased. Current size: ${oldSizeGB}G, requested size: ${newSizeGB}G. Only increases are allowed for safety.`,
           };
         }
 
@@ -2378,7 +2814,7 @@ export const installedScriptsRouter = createTRPCRouter({
         const writeCommand = `cat > "${configPath}" << 'EOFCONFIG'
 ${rawConfig}
 EOFCONFIG`;
-        
+
         await new Promise<void>((resolve, reject) => {
           void sshExecutionService.executeCommand(
             server as Server,
@@ -2395,21 +2831,27 @@ EOFCONFIG`;
               } else {
                 reject(new Error(`Command failed with exit code ${exitCode}`));
               }
-            }
+            },
           );
         });
 
         // Check if disk size increased and needs resizing
-        let resizeResult: { success: boolean; message: string; error?: string } | null = null;
+        let resizeResult: {
+          success: boolean;
+          message: string;
+          error?: string;
+        } | null = null;
         if (newSizeGB > oldSizeGB) {
           // Parse storage information
-          const storageInfo = parseRootfsStorage(String(input.config.rootfs_storage));
+          const storageInfo = parseRootfsStorage(
+            String(input.config.rootfs_storage),
+          );
           if (!storageInfo) {
             // Rollback config file
             const rollbackCommand = `cat > "${configPath}" << 'EOFCONFIG'
 ${reconstructConfig(currentConfig ?? {})}
 EOFCONFIG`;
-            
+
             await new Promise<void>((resolve, reject) => {
               void sshExecutionService.executeCommand(
                 server as Server,
@@ -2418,30 +2860,42 @@ EOFCONFIG`;
                 (error: string) => reject(new Error(error)),
                 (exitCode: number) => {
                   if (exitCode === 0) resolve();
-                  else reject(new Error(`Rollback failed with exit code ${exitCode}`));
-                }
+                  else
+                    reject(
+                      new Error(`Rollback failed with exit code ${exitCode}`),
+                    );
+                },
               );
             });
-            
+
             return {
               success: false,
-              error: 'Invalid rootfs_storage format. Configuration rolled back.'
+              error:
+                "Invalid rootfs_storage format. Configuration rolled back.",
             };
           }
 
           // Attempt disk resize
           try {
-            console.log(`Attempting to resize disk from ${oldSizeGB}G to ${newSizeGB}G for container ${script.container_id}`);
-            resizeResult = await resizeDisk(server as Server, script.container_id, storageInfo, oldSizeGB, newSizeGB);
-            console.log('Resize result:', resizeResult);
-            
+            console.log(
+              `Attempting to resize disk from ${oldSizeGB}G to ${newSizeGB}G for container ${script.container_id}`,
+            );
+            resizeResult = await resizeDisk(
+              server as Server,
+              script.container_id,
+              storageInfo,
+              oldSizeGB,
+              newSizeGB,
+            );
+            console.log("Resize result:", resizeResult);
+
             if (!resizeResult.success) {
-              console.log('Resize failed, attempting rollback...');
+              console.log("Resize failed, attempting rollback...");
               // Rollback config file on resize failure
               const rollbackCommand = `cat > "${configPath}" << 'EOFCONFIG'
 ${reconstructConfig(currentConfig ?? {})}
 EOFCONFIG`;
-              
+
               try {
                 await new Promise<void>((resolve, reject) => {
                   void sshExecutionService.executeCommand(
@@ -2451,27 +2905,32 @@ EOFCONFIG`;
                     (error: string) => reject(new Error(error)),
                     (exitCode: number) => {
                       if (exitCode === 0) resolve();
-                      else reject(new Error(`Rollback failed with exit code ${exitCode}`));
-                    }
+                      else
+                        reject(
+                          new Error(
+                            `Rollback failed with exit code ${exitCode}`,
+                          ),
+                        );
+                    },
                   );
                 });
-                console.log('Rollback successful');
+                console.log("Rollback successful");
               } catch (rollbackError) {
-                console.error('Rollback failed:', rollbackError);
+                console.error("Rollback failed:", rollbackError);
               }
-              
+
               return {
                 success: false,
-                error: `Configuration rolled back. Disk resize failed: ${resizeResult.error}`
+                error: `Configuration rolled back. Disk resize failed: ${resizeResult.error}`,
               };
             }
           } catch (error) {
-            console.error('Resize operation threw error:', error);
+            console.error("Resize operation threw error:", error);
             // Rollback config file on resize error
             const rollbackCommand = `cat > "${configPath}" << 'EOFCONFIG'
 ${reconstructConfig(currentConfig ?? {})}
 EOFCONFIG`;
-            
+
             try {
               await new Promise<void>((resolve, reject) => {
                 void sshExecutionService.executeCommand(
@@ -2481,18 +2940,21 @@ EOFCONFIG`;
                   (error: string) => reject(new Error(error)),
                   (exitCode: number) => {
                     if (exitCode === 0) resolve();
-                    else reject(new Error(`Rollback failed with exit code ${exitCode}`));
-                  }
+                    else
+                      reject(
+                        new Error(`Rollback failed with exit code ${exitCode}`),
+                      );
+                  },
                 );
               });
-              console.log('Rollback successful after error');
+              console.log("Rollback successful after error");
             } catch (rollbackError) {
-              console.error('Rollback failed after error:', rollbackError);
+              console.error("Rollback failed after error:", rollbackError);
             }
-            
+
             return {
               success: false,
-              error: `Configuration rolled back. Disk resize error: ${error instanceof Error ? error.message : 'Unknown error'}`
+              error: `Configuration rolled back. Disk resize error: ${error instanceof Error ? error.message : "Unknown error"}`,
             };
           }
         }
@@ -2501,25 +2963,28 @@ EOFCONFIG`;
         const configData = {
           ...input.config,
           config_hash: configHash,
-          synced_at: new Date()
+          synced_at: new Date(),
         };
-        
+
         await db.updateLXCConfig(input.scriptId, configData);
-        
+
         // Return success message with resize info if applicable
-        const message = resizeResult 
+        const message = resizeResult
           ? `LXC configuration saved successfully. ${resizeResult.message}`
-          : 'LXC configuration saved successfully';
-        
+          : "LXC configuration saved successfully";
+
         return {
           success: true,
-          message
+          message,
         };
       } catch (error) {
-        console.error('Error in saveLXCConfig:', error);
+        console.error("Error in saveLXCConfig:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to save LXC config'
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to save LXC config",
         };
       }
     }),
@@ -2532,54 +2997,59 @@ EOFCONFIG`;
       const result = await installedScriptsRouter
         .createCaller({ headers: new Headers() })
         .getLXCConfig({ scriptId: input.scriptId, forceSync: true });
-      
+
       return result;
     }),
 
   // Get backup-capable storages for a server
   getBackupStorages: publicProcedure
-    .input(z.object({ 
-      serverId: z.number(), 
-      forceRefresh: z.boolean().optional().default(false) 
-    }))
+    .input(
+      z.object({
+        serverId: z.number(),
+        forceRefresh: z.boolean().optional().default(false),
+      }),
+    )
     .query(async ({ input }) => {
       try {
         const db = getDatabase();
         const server = await db.getServerById(input.serverId);
-        
+
         if (!server) {
           return {
             success: false,
-            error: 'Server not found',
+            error: "Server not found",
             storages: [],
-            cached: false
+            cached: false,
           };
         }
 
         const storageService = getStorageService();
-        const { default: SSHService } = await import('~/server/ssh-service');
-        const { getSSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
+        const { getSSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshService = new SSHService();
         const sshExecutionService = getSSHExecutionService();
-        
+
         // Test SSH connection first
-        const connectionTest = await sshService.testSSHConnection(server as Server);
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
         if (!(connectionTest as any).success) {
           return {
             success: false,
-            error: `SSH connection failed: ${(connectionTest as any).error ?? 'Unknown error'}`,
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
             storages: [],
-            cached: false
+            cached: false,
           };
         }
 
         // Get server hostname to filter storages
-        let serverHostname = '';
+        let serverHostname = "";
         try {
           await new Promise<void>((resolve, reject) => {
-            sshExecutionService.executeCommand(
+            void sshExecutionService.executeCommand(
               server as Server,
-              'hostname',
+              "hostname",
               (data: string) => {
                 serverHostname += data;
               },
@@ -2590,136 +3060,222 @@ EOFCONFIG`;
                 if (exitCode === 0) {
                   resolve();
                 } else {
-                  reject(new Error(`hostname command failed with exit code ${exitCode}`));
+                  reject(
+                    new Error(
+                      `hostname command failed with exit code ${exitCode}`,
+                    ),
+                  );
                 }
-              }
+              },
             );
           });
         } catch (error) {
-          console.error('Error getting server hostname:', error);
+          console.error("Error getting server hostname:", error);
           // Continue without filtering if hostname can't be retrieved
         }
-        
+
         const normalizedHostname = serverHostname.trim().toLowerCase();
-        
+
+        const toNumber = (value: unknown): number | null => {
+          if (typeof value === "number" && Number.isFinite(value)) return value;
+          if (typeof value === "string") {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : null;
+          }
+          return null;
+        };
+
         // Check if we have cached data
         const wasCached = !input.forceRefresh;
-        
+
         // Fetch storages (will use cache if not forcing refresh)
-        const allStorages = await storageService.getStorages(server as Server, input.forceRefresh);
-        
+        const allStorages = await storageService.getStorages(
+          server as Server,
+          input.forceRefresh,
+        );
+
         // Filter storages by node hostname matching
-        const applicableStorages = allStorages.filter(storage => {
+        const applicableStorages = allStorages.filter((storage) => {
           // If storage has no nodes specified, it's available on all nodes
           if (!storage.nodes || storage.nodes.length === 0) {
             return true;
           }
-          
+
           // If we couldn't get hostname, include all storages (fallback)
           if (!normalizedHostname) {
             return true;
           }
-          
+
           // Check if server hostname is in the nodes array (case-insensitive, trimmed)
-          const normalizedNodes = storage.nodes.map(node => node.trim().toLowerCase());
+          const normalizedNodes = storage.nodes.map((node) =>
+            node.trim().toLowerCase(),
+          );
           return normalizedNodes.includes(normalizedHostname);
         });
-        
+
+        // Best-effort runtime storage usage from pvesm (bytes -> GB)
+        const storageStats = new Map<
+          string,
+          {
+            availableGB: number | null;
+            usedGB: number | null;
+            totalGB: number | null;
+          }
+        >();
+        try {
+          let pvesmOutput = "";
+          await new Promise<void>((resolve) => {
+            void sshExecutionService.executeCommand(
+              server as Server,
+              "pvesm status --verbose --output-format json 2>/dev/null || true",
+              (data: string) => {
+                pvesmOutput += data;
+              },
+              () => resolve(),
+              () => resolve(),
+            );
+          });
+
+          const parsed = JSON.parse(pvesmOutput) as Array<
+            Record<string, unknown>
+          >;
+          if (Array.isArray(parsed)) {
+            for (const row of parsed) {
+              const storageName =
+                typeof row.storage === "string" ? row.storage : null;
+              if (!storageName) continue;
+              const avail = toNumber(row.avail);
+              const used = toNumber(row.used);
+              const total = toNumber(row.total);
+              const toGb = (bytes: number | null) =>
+                bytes != null
+                  ? Math.max(0, Math.floor(bytes / 1024 ** 3))
+                  : null;
+              storageStats.set(storageName, {
+                availableGB: toGb(avail),
+                usedGB: toGb(used),
+                totalGB: toGb(total),
+              });
+            }
+          }
+        } catch {
+          // Ignore parsing/runtime issues: storage usage is optional UX metadata.
+        }
+
+        const enrichedStorages = applicableStorages.map((storage) => {
+          const stat = storageStats.get(storage.name);
+          return {
+            ...storage,
+            availableGB: stat?.availableGB ?? null,
+            usedGB: stat?.usedGB ?? null,
+            totalGB: stat?.totalGB ?? null,
+          };
+        });
+
         return {
           success: true,
-          storages: applicableStorages,
-          cached: wasCached && applicableStorages.length > 0
+          storages: enrichedStorages,
+          cached: wasCached && enrichedStorages.length > 0,
         };
       } catch (error) {
-        console.error('Error in getBackupStorages:', error);
+        console.error("Error in getBackupStorages:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to fetch storages',
+          error:
+            error instanceof Error ? error.message : "Failed to fetch storages",
           storages: [],
-          cached: false
+          cached: false,
         };
       }
     }),
 
   // Execute backup for a container
   executeBackup: publicProcedure
-    .input(z.object({ 
-      containerId: z.string(),
-      storage: z.string(),
-      serverId: z.number()
-    }))
+    .input(
+      z.object({
+        containerId: z.string(),
+        storage: z.string(),
+        serverId: z.number(),
+      }),
+    )
     .mutation(async ({ input }) => {
       try {
         const db = getDatabase();
         const server = await db.getServerById(input.serverId);
-        
+
         if (!server) {
           return {
             success: false,
-            error: 'Server not found',
-            executionId: null
+            error: "Server not found",
+            executionId: null,
           };
         }
 
-        const { default: SSHService } = await import('~/server/ssh-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
         const sshService = new SSHService();
-        
+
         // Test SSH connection first
-        const connectionTest = await sshService.testSSHConnection(server as Server);
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
         if (!(connectionTest as any).success) {
           return {
             success: false,
-            error: `SSH connection failed: ${(connectionTest as any).error ?? 'Unknown error'}`,
-            executionId: null
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
+            executionId: null,
           };
         }
 
         // Generate execution ID for websocket tracking
         const executionId = `backup_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
+
         return {
           success: true,
           executionId,
           containerId: input.containerId,
           storage: input.storage,
-          server: server as Server
+          server: server as Server,
         };
       } catch (error) {
-        console.error('Error in executeBackup:', error);
+        console.error("Error in executeBackup:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to execute backup',
-          executionId: null
+          error:
+            error instanceof Error ? error.message : "Failed to execute backup",
+          executionId: null,
         };
       }
     }),
 
   // Get next free ID from cluster (single ID for sequential cloning)
   getClusterNextId: publicProcedure
-    .input(z.object({ 
-      serverId: z.number()
-    }))
+    .input(
+      z.object({
+        serverId: z.number(),
+      }),
+    )
     .query(async ({ input }) => {
       try {
         const db = getDatabase();
         const server = await db.getServerById(input.serverId);
-        
+
         if (!server) {
           return {
             success: false,
-            error: 'Server not found',
-            nextId: null
+            error: "Server not found",
+            nextId: null,
           };
         }
 
-        const { getSSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { getSSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshExecutionService = getSSHExecutionService();
-        
-        let output = '';
+
+        let output = "";
         await new Promise<void>((resolve, reject) => {
-          sshExecutionService.executeCommand(
+          void sshExecutionService.executeCommand(
             server as Server,
-            'pvesh get /cluster/nextid',
+            "pvesh get /cluster/nextid",
             (data: string) => {
               output += data;
             },
@@ -2730,9 +3286,11 @@ EOFCONFIG`;
               if (exitCode === 0) {
                 resolve();
               } else {
-                reject(new Error(`pvesh command failed with exit code ${exitCode}`));
+                reject(
+                  new Error(`pvesh command failed with exit code ${exitCode}`),
+                );
               }
-            }
+            },
           );
         });
 
@@ -2740,150 +3298,169 @@ EOFCONFIG`;
         if (!nextId || !/^\d+$/.test(nextId)) {
           return {
             success: false,
-            error: 'Invalid next ID received',
-            nextId: null
+            error: "Invalid next ID received",
+            nextId: null,
           };
         }
 
         return {
           success: true,
-          nextId
+          nextId,
         };
       } catch (error) {
-        console.error('Error in getClusterNextId:', error);
+        console.error("Error in getClusterNextId:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to get next ID',
-          nextId: null
+          error:
+            error instanceof Error ? error.message : "Failed to get next ID",
+          nextId: null,
         };
       }
     }),
 
   // Get container hostname/name
   getContainerHostname: publicProcedure
-    .input(z.object({ 
-      containerId: z.string(),
-      serverId: z.number(),
-      containerType: z.enum(['lxc', 'vm'])
-    }))
+    .input(
+      z.object({
+        containerId: z.string(),
+        serverId: z.number(),
+        containerType: z.enum(["lxc", "vm"]),
+      }),
+    )
     .query(async ({ input }) => {
       try {
         const db = getDatabase();
         const server = await db.getServerById(input.serverId);
-        
+
         if (!server) {
           return {
             success: false,
-            error: 'Server not found',
-            hostname: null
+            error: "Server not found",
+            hostname: null,
           };
         }
 
-        const { getSSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { getSSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshExecutionService = getSSHExecutionService();
-        
+
         const nodeName = (server as Server).name;
-        const configPath = input.containerType === 'lxc' 
-          ? `/etc/pve/nodes/${nodeName}/lxc/${input.containerId}.conf`
-          : `/etc/pve/nodes/${nodeName}/qemu-server/${input.containerId}.conf`;
-        
-        let configContent = '';
+        const configPath =
+          input.containerType === "lxc"
+            ? `/etc/pve/nodes/${nodeName}/lxc/${input.containerId}.conf`
+            : `/etc/pve/nodes/${nodeName}/qemu-server/${input.containerId}.conf`;
+
+        let configContent = "";
         await new Promise<void>((resolve) => {
-          sshExecutionService.executeCommand(
+          void sshExecutionService.executeCommand(
             server as Server,
             `cat "${configPath}" 2>/dev/null || echo ""`,
             (data: string) => {
               configContent += data;
             },
             () => resolve(), // Don't fail on error
-            () => resolve() // Always resolve
+            () => resolve(), // Always resolve
           );
         });
 
         if (!configContent.trim()) {
           return {
             success: true,
-            hostname: null
+            hostname: null,
           };
         }
 
         // Parse config for hostname (LXC) or name (VM)
-        const lines = configContent.split('\n');
+        const lines = configContent.split("\n");
         for (const line of lines) {
           const trimmed = line.trim();
-          if (input.containerType === 'lxc' && trimmed.startsWith('hostname:')) {
+          if (
+            input.containerType === "lxc" &&
+            trimmed.startsWith("hostname:")
+          ) {
             const hostname = trimmed.substring(9).trim();
             return {
               success: true,
-              hostname
+              hostname,
             };
-          } else if (input.containerType === 'vm' && trimmed.startsWith('name:')) {
+          } else if (
+            input.containerType === "vm" &&
+            trimmed.startsWith("name:")
+          ) {
             const name = trimmed.substring(5).trim();
             return {
               success: true,
-              hostname: name
+              hostname: name,
             };
           }
         }
 
         return {
           success: true,
-          hostname: null
+          hostname: null,
         };
       } catch (error) {
-        console.error('Error in getContainerHostname:', error);
+        console.error("Error in getContainerHostname:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to get container hostname',
-          hostname: null
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to get container hostname",
+          hostname: null,
         };
       }
     }),
 
   // Get clone storages (rootdir or images content)
   getCloneStorages: publicProcedure
-    .input(z.object({ 
-      serverId: z.number(), 
-      forceRefresh: z.boolean().optional().default(false) 
-    }))
+    .input(
+      z.object({
+        serverId: z.number(),
+        forceRefresh: z.boolean().optional().default(false),
+      }),
+    )
     .query(async ({ input }) => {
       try {
         const db = getDatabase();
         const server = await db.getServerById(input.serverId);
-        
+
         if (!server) {
           return {
             success: false,
-            error: 'Server not found',
+            error: "Server not found",
             storages: [],
-            cached: false
+            cached: false,
           };
         }
 
         const storageService = getStorageService();
-        const { default: SSHService } = await import('~/server/ssh-service');
-        const { getSSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
+        const { getSSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshService = new SSHService();
         const sshExecutionService = getSSHExecutionService();
-        
+
         // Test SSH connection first
-        const connectionTest = await sshService.testSSHConnection(server as Server);
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
         if (!(connectionTest as any).success) {
           return {
             success: false,
-            error: `SSH connection failed: ${(connectionTest as any).error ?? 'Unknown error'}`,
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
             storages: [],
-            cached: false
+            cached: false,
           };
         }
 
         // Get server hostname to filter storages
-        let serverHostname = '';
+        let serverHostname = "";
         try {
           await new Promise<void>((resolve, reject) => {
-            sshExecutionService.executeCommand(
+            void sshExecutionService.executeCommand(
               server as Server,
-              'hostname',
+              "hostname",
               (data: string) => {
                 serverHostname += data;
               },
@@ -2894,114 +3471,130 @@ EOFCONFIG`;
                 if (exitCode === 0) {
                   resolve();
                 } else {
-                  reject(new Error(`hostname command failed with exit code ${exitCode}`));
+                  reject(
+                    new Error(
+                      `hostname command failed with exit code ${exitCode}`,
+                    ),
+                  );
                 }
-              }
+              },
             );
           });
         } catch (error) {
-          console.error('Error getting server hostname:', error);
+          console.error("Error getting server hostname:", error);
           // Continue without filtering if hostname can't be retrieved
         }
-        
+
         const normalizedHostname = serverHostname.trim().toLowerCase();
-        
+
         // Check if we have cached data
         const wasCached = !input.forceRefresh;
-        
+
         // Fetch storages (will use cache if not forcing refresh)
-        const allStorages = await storageService.getStorages(server as Server, input.forceRefresh);
-        
+        const allStorages = await storageService.getStorages(
+          server as Server,
+          input.forceRefresh,
+        );
+
         // Filter storages by node hostname matching and content type (only rootdir for cloning)
-        const applicableStorages = allStorages.filter(storage => {
+        const applicableStorages = allStorages.filter((storage) => {
           // Check content type - must have rootdir for cloning
-          const hasRootdir = storage.content.includes('rootdir');
+          const hasRootdir = storage.content.includes("rootdir");
           if (!hasRootdir) {
             return false;
           }
-          
+
           // If storage has no nodes specified, it's available on all nodes
           if (!storage.nodes || storage.nodes.length === 0) {
             return true;
           }
-          
+
           // If we couldn't get hostname, include all storages (fallback)
           if (!normalizedHostname) {
             return true;
           }
-          
+
           // Check if server hostname is in the nodes array (case-insensitive, trimmed)
-          const normalizedNodes = storage.nodes.map(node => node.trim().toLowerCase());
+          const normalizedNodes = storage.nodes.map((node) =>
+            node.trim().toLowerCase(),
+          );
           return normalizedNodes.includes(normalizedHostname);
         });
-        
+
         return {
           success: true,
           storages: applicableStorages,
-          cached: wasCached && applicableStorages.length > 0
+          cached: wasCached && applicableStorages.length > 0,
         };
       } catch (error) {
-        console.error('Error in getCloneStorages:', error);
+        console.error("Error in getCloneStorages:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to fetch storages',
+          error:
+            error instanceof Error ? error.message : "Failed to fetch storages",
           storages: [],
-          cached: false
+          cached: false,
         };
       }
     }),
 
   // Generate clone hostnames
   generateCloneHostnames: publicProcedure
-    .input(z.object({ 
-      originalHostname: z.string(),
-      containerType: z.enum(['lxc', 'vm']),
-      serverId: z.number(),
-      count: z.number().min(1).max(100)
-    }))
+    .input(
+      z.object({
+        originalHostname: z.string(),
+        containerType: z.enum(["lxc", "vm"]),
+        serverId: z.number(),
+        count: z.number().min(1).max(100),
+      }),
+    )
     .query(async ({ input }) => {
       try {
         const db = getDatabase();
         const server = await db.getServerById(input.serverId);
-        
+
         if (!server) {
           return {
             success: false,
-            error: 'Server not found',
-            hostnames: []
+            error: "Server not found",
+            hostnames: [],
           };
         }
 
-        const { getSSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { getSSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshExecutionService = getSSHExecutionService();
-        
+
         // Get all existing containers/VMs to find existing clones (check both LXC and VM)
         const existingHostnames = new Set<string>();
-        
+
         // Check LXC containers
-        let lxcOutput = '';
+        let lxcOutput = "";
         try {
           await new Promise<void>((resolve) => {
-            sshExecutionService.executeCommand(
+            void sshExecutionService.executeCommand(
               server as Server,
-              'pct list',
+              "pct list",
               (data: string) => {
                 lxcOutput += data;
               },
               (error: string) => {
-                console.error(`pct list error for server ${server.name}:`, error);
+                console.error(
+                  `pct list error for server ${server.name}:`,
+                  error,
+                );
                 resolve();
               },
-              () => resolve()
+              () => resolve(),
             );
           });
-          
-          const lxcLines = lxcOutput.split('\n').filter(line => line.trim());
+
+          const lxcLines = lxcOutput.split("\n").filter((line) => line.trim());
           for (const line of lxcLines) {
-            if (line.includes('CTID') || line.includes('NAME')) continue;
+            if (line.includes("CTID") || line.includes("NAME")) continue;
             const parts = line.trim().split(/\s+/);
             if (parts.length >= 3) {
-              const name = parts.slice(2).join(' ').trim();
+              const name = parts.slice(2).join(" ").trim();
               if (name) {
                 existingHostnames.add(name.toLowerCase());
               }
@@ -3010,31 +3603,34 @@ EOFCONFIG`;
         } catch {
           // Continue even if LXC list fails
         }
-        
+
         // Check VMs
-        let vmOutput = '';
+        let vmOutput = "";
         try {
           await new Promise<void>((resolve) => {
-            sshExecutionService.executeCommand(
+            void sshExecutionService.executeCommand(
               server as Server,
-              'qm list',
+              "qm list",
               (data: string) => {
                 vmOutput += data;
               },
               (error: string) => {
-                console.error(`qm list error for server ${server.name}:`, error);
+                console.error(
+                  `qm list error for server ${server.name}:`,
+                  error,
+                );
                 resolve();
               },
-              () => resolve()
+              () => resolve(),
             );
           });
-          
-          const vmLines = vmOutput.split('\n').filter(line => line.trim());
+
+          const vmLines = vmOutput.split("\n").filter((line) => line.trim());
           for (const line of vmLines) {
-            if (line.includes('VMID') || line.includes('NAME')) continue;
+            if (line.includes("VMID") || line.includes("NAME")) continue;
             const parts = line.trim().split(/\s+/);
             if (parts.length >= 3) {
-              const name = parts.slice(2).join(' ').trim();
+              const name = parts.slice(2).join(" ").trim();
               if (name) {
                 existingHostnames.add(name.toLowerCase());
               }
@@ -3045,13 +3641,15 @@ EOFCONFIG`;
         }
 
         // Find next available clone number
-        const clonePattern = new RegExp(`^${input.originalHostname.toLowerCase()}-clone-(\\d+)$`);
+        const clonePattern = new RegExp(
+          `^${input.originalHostname.toLowerCase()}-clone-(\\d+)$`,
+        );
         const existingCloneNumbers: number[] = [];
-        
+
         for (const hostname of existingHostnames) {
           const match = hostname.match(clonePattern);
           if (match) {
-            existingCloneNumbers.push(parseInt(match[1] ?? '0', 10));
+            existingCloneNumbers.push(parseInt(match[1] ?? "0", 10));
           }
         }
 
@@ -3059,7 +3657,8 @@ EOFCONFIG`;
         let nextNumber = 1;
         if (existingCloneNumbers.length > 0) {
           existingCloneNumbers.sort((a, b) => a - b);
-          const lastNumber = existingCloneNumbers[existingCloneNumbers.length - 1];
+          const lastNumber =
+            existingCloneNumbers[existingCloneNumbers.length - 1];
           if (lastNumber !== undefined) {
             nextNumber = lastNumber + 1;
           }
@@ -3073,14 +3672,17 @@ EOFCONFIG`;
 
         return {
           success: true,
-          hostnames
+          hostnames,
         };
       } catch (error) {
-        console.error('Error in generateCloneHostnames:', error);
+        console.error("Error in generateCloneHostnames:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to generate clone hostnames',
-          hostnames: []
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to generate clone hostnames",
+          hostnames: [],
         };
       }
     }),
@@ -3088,37 +3690,41 @@ EOFCONFIG`;
   // Execute clone (prepare for websocket execution)
   // Note: nextIds will be obtained sequentially during cloning in server.js
   executeClone: publicProcedure
-    .input(z.object({ 
-      containerId: z.string(),
-      serverId: z.number(),
-      storage: z.string(),
-      cloneCount: z.number().min(1).max(100),
-      hostnames: z.array(z.string()),
-      containerType: z.enum(['lxc', 'vm'])
-    }))
+    .input(
+      z.object({
+        containerId: z.string(),
+        serverId: z.number(),
+        storage: z.string(),
+        cloneCount: z.number().min(1).max(100),
+        hostnames: z.array(z.string()),
+        containerType: z.enum(["lxc", "vm"]),
+      }),
+    )
     .mutation(async ({ input }) => {
       try {
         const db = getDatabase();
         const server = await db.getServerById(input.serverId);
-        
+
         if (!server) {
           return {
             success: false,
-            error: 'Server not found',
-            executionId: null
+            error: "Server not found",
+            executionId: null,
           };
         }
 
-        const { default: SSHService } = await import('~/server/ssh-service');
+        const { default: SSHService } = await import("~/server/ssh-service");
         const sshService = new SSHService();
-        
+
         // Test SSH connection first
-        const connectionTest = await sshService.testSSHConnection(server as Server);
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
         if (!(connectionTest as any).success) {
           return {
             success: false,
-            error: `SSH connection failed: ${(connectionTest as any).error ?? 'Unknown error'}`,
-            executionId: null
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
+            executionId: null,
           };
         }
 
@@ -3126,14 +3732,14 @@ EOFCONFIG`;
         if (input.hostnames.length !== input.cloneCount) {
           return {
             success: false,
-            error: 'Hostnames count must match clone count',
-            executionId: null
+            error: "Hostnames count must match clone count",
+            executionId: null,
           };
         }
 
         // Generate execution ID for websocket tracking
         const executionId = `clone_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
+
         return {
           success: true,
           executionId,
@@ -3142,77 +3748,88 @@ EOFCONFIG`;
           cloneCount: input.cloneCount,
           hostnames: input.hostnames,
           containerType: input.containerType,
-          server: server as Server
+          server: server as Server,
         };
       } catch (error) {
-        console.error('Error in executeClone:', error);
+        console.error("Error in executeClone:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to execute clone',
-          executionId: null
+          error:
+            error instanceof Error ? error.message : "Failed to execute clone",
+          executionId: null,
         };
       }
     }),
 
   // Add cloned container to database
   addClonedContainerToDatabase: publicProcedure
-    .input(z.object({ 
-      containerId: z.string(),
-      serverId: z.number(),
-      containerType: z.enum(['lxc', 'vm'])
-    }))
+    .input(
+      z.object({
+        containerId: z.string(),
+        serverId: z.number(),
+        containerType: z.enum(["lxc", "vm"]),
+      }),
+    )
     .mutation(async ({ input }) => {
       try {
         const db = getDatabase();
         const server = await db.getServerById(input.serverId);
-        
+
         if (!server) {
           return {
             success: false,
-            error: 'Server not found',
-            scriptId: null
+            error: "Server not found",
+            scriptId: null,
           };
         }
 
-        const { getSSHExecutionService } = await import('~/server/ssh-execution-service');
+        const { getSSHExecutionService } =
+          await import("~/server/ssh-execution-service");
         const sshExecutionService = getSSHExecutionService();
-        
+
         // Read config file to get hostname/name (node-specific path)
         const nodeName = (server as Server).name;
-        const configPath = input.containerType === 'lxc' 
-          ? `/etc/pve/nodes/${nodeName}/lxc/${input.containerId}.conf`
-          : `/etc/pve/nodes/${nodeName}/qemu-server/${input.containerId}.conf`;
-        
-        let configContent = '';
+        const configPath =
+          input.containerType === "lxc"
+            ? `/etc/pve/nodes/${nodeName}/lxc/${input.containerId}.conf`
+            : `/etc/pve/nodes/${nodeName}/qemu-server/${input.containerId}.conf`;
+
+        let configContent = "";
         await new Promise<void>((resolve) => {
-          sshExecutionService.executeCommand(
+          void sshExecutionService.executeCommand(
             server as Server,
             `cat "${configPath}" 2>/dev/null || echo ""`,
             (data: string) => {
               configContent += data;
             },
             () => resolve(),
-            () => resolve()
+            () => resolve(),
           );
         });
 
         if (!configContent.trim()) {
           return {
             success: false,
-            error: 'Config file not found',
-            scriptId: null
+            error: "Config file not found",
+            scriptId: null,
           };
         }
 
         // Parse config for hostname/name
-        let hostname = '';
-        const lines = configContent.split('\n');
+        let hostname = "";
+        const lines = configContent.split("\n");
         for (const line of lines) {
           const trimmed = line.trim();
-          if (input.containerType === 'lxc' && trimmed.startsWith('hostname:')) {
+          if (
+            input.containerType === "lxc" &&
+            trimmed.startsWith("hostname:")
+          ) {
             hostname = trimmed.substring(9).trim();
             break;
-          } else if (input.containerType === 'vm' && trimmed.startsWith('name:')) {
+          } else if (
+            input.containerType === "vm" &&
+            trimmed.startsWith("name:")
+          ) {
             hostname = trimmed.substring(5).trim();
             break;
           }
@@ -3228,28 +3845,280 @@ EOFCONFIG`;
           script_path: `cloned/${hostname}`,
           container_id: input.containerId,
           server_id: input.serverId,
-          execution_mode: 'ssh',
-          status: 'success',
-          output_log: `Cloned container/VM`
+          execution_mode: "ssh",
+          status: "success",
+          output_log: `Cloned container/VM`,
         });
 
         // For LXC, store config in database
-        if (input.containerType === 'lxc') {
+        if (input.containerType === "lxc") {
           const parsedConfig = parseRawConfig(configContent);
           await db.createLXCConfig(script.id, parsedConfig);
         }
 
         return {
           success: true,
-          scriptId: script.id
+          scriptId: script.id,
         };
       } catch (error) {
-        console.error('Error in addClonedContainerToDatabase:', error);
+        console.error("Error in addClonedContainerToDatabase:", error);
         return {
           success: false,
-          error: error instanceof Error ? error.message : 'Failed to add cloned container to database',
-          scriptId: null
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to add cloned container to database",
+          scriptId: null,
         };
       }
-    })
+    }),
+
+  // Get resource templates (CPU/RAM/DISK) from existing containers/VMs
+  getContainersResourceTemplates: publicProcedure
+    .input(
+      z.object({
+        serverId: z.number(),
+        containerIds: z.array(z.string()).min(1).max(100),
+      }),
+    )
+    .query(async ({ input }) => {
+      try {
+        const db = getDatabase();
+        const server = await db.getServerById(input.serverId);
+        if (!server) {
+          return { success: false, error: "Server not found", templates: {} };
+        }
+
+        const { default: SSHService } = await import("~/server/ssh-service");
+        const { getSSHExecutionService } =
+          await import("~/server/ssh-execution-service");
+        const sshService = new SSHService();
+        const sshExecutionService = getSSHExecutionService();
+
+        const connectionTest = await sshService.testSSHConnection(
+          server as Server,
+        );
+        if (!(connectionTest as any).success) {
+          return {
+            success: false,
+            error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
+            templates: {},
+          };
+        }
+
+        const parseDiskToGB = (raw: string | null): number | null => {
+          if (!raw) return null;
+          const m = /([0-9]+(?:\.[0-9]+)?)([KMGTP])?/.exec(raw.trim());
+          if (!m) return null;
+          const num = Number(m[1]);
+          if (!Number.isFinite(num)) return null;
+          const unit = (m[2] ?? "G").toUpperCase();
+          const factor: Record<string, number> = {
+            K: 1 / (1024 * 1024),
+            M: 1 / 1024,
+            G: 1,
+            T: 1024,
+            P: 1024 * 1024,
+          };
+          return Math.max(1, Math.ceil(num * (factor[unit] ?? 1)));
+        };
+
+        const templates: Record<
+          string,
+          { cpu: number | null; ramMB: number | null; diskGB: number | null }
+        > = {};
+
+        for (const containerId of input.containerIds) {
+          const cleanId = containerId.trim();
+          if (!/^\d+$/.test(cleanId)) continue;
+
+          // Try LXC first
+          let lxcConfig = "";
+          await new Promise<void>((resolve) => {
+            void sshExecutionService.executeCommand(
+              server as Server,
+              `pct config ${cleanId} 2>/dev/null || true`,
+              (data: string) => {
+                lxcConfig += data;
+              },
+              () => resolve(),
+              () => resolve(),
+            );
+          });
+
+          if (lxcConfig.trim()) {
+            const cores = /(?:^|\n)cores:\s*(\d+)/.exec(lxcConfig)?.[1] ?? null;
+            const memory =
+              /(?:^|\n)memory:\s*(\d+)/.exec(lxcConfig)?.[1] ?? null;
+            const rootfsSize =
+              /rootfs:[^\n]*size=([0-9.]+[KMGTP]?)/.exec(lxcConfig)?.[1] ??
+              null;
+            templates[cleanId] = {
+              cpu: cores ? Number(cores) : null,
+              ramMB: memory ? Number(memory) : null,
+              diskGB: parseDiskToGB(rootfsSize),
+            };
+            continue;
+          }
+
+          // Fallback to VM config
+          let vmConfig = "";
+          await new Promise<void>((resolve) => {
+            void sshExecutionService.executeCommand(
+              server as Server,
+              `qm config ${cleanId} 2>/dev/null || true`,
+              (data: string) => {
+                vmConfig += data;
+              },
+              () => resolve(),
+              () => resolve(),
+            );
+          });
+
+          const cores = /(?:^|\n)cores:\s*(\d+)/.exec(vmConfig)?.[1] ?? null;
+          const memory = /(?:^|\n)memory:\s*(\d+)/.exec(vmConfig)?.[1] ?? null;
+          const vmDisk =
+            /(?:^|\n)(?:scsi\d+|virtio\d+|sata\d+|ide\d+):[^\n]*size=([0-9.]+[KMGTP]?)/.exec(
+              vmConfig,
+            )?.[1] ?? null;
+
+          templates[cleanId] = {
+            cpu: cores ? Number(cores) : null,
+            ramMB: memory ? Number(memory) : null,
+            diskGB: parseDiskToGB(vmDisk),
+          };
+        }
+
+        return { success: true, templates, error: null };
+      } catch (error) {
+        console.error("Error in getContainersResourceTemplates:", error);
+        return {
+          success: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch resource templates",
+          templates: {} as Record<
+            string,
+            { cpu: number | null; ramMB: number | null; diskGB: number | null }
+          >,
+        };
+      }
+    }),
+
+  // List LXC containers and VMs available on a given server
+  listContainersOnServer: publicProcedure
+    .input(z.object({ serverId: z.number() }))
+    .query(async ({ input }) => {
+      const db = getDatabase();
+      const server = await db.getServerById(input.serverId);
+      if (!server) {
+        return { lxc: [], vm: [], error: "Server not found" };
+      }
+
+      const { default: SSHService } = await import("~/server/ssh-service");
+      const { default: SSHExecutionService } =
+        await import("~/server/ssh-execution-service");
+      const sshService = new SSHService();
+      const sshExecutionService = new SSHExecutionService();
+
+      const connectionTest = await sshService.testSSHConnection(
+        server as Server,
+      );
+      if (!(connectionTest as any).success) {
+        return {
+          lxc: [],
+          vm: [],
+          error: `SSH connection failed: ${(connectionTest as any).error ?? "Unknown error"}`,
+        };
+      }
+
+      /** Parse `pct list` output: VMID Status Lock Name */
+      const parsePctList = (
+        output: string,
+      ): Array<{ id: string; name: string; status: string }> => {
+        const results: Array<{ id: string; name: string; status: string }> = [];
+        for (const line of output.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed || /VMID|CTID/i.test(trimmed)) continue;
+          const parts = trimmed.split(/\s+/);
+          const id = parts[0] ?? "";
+          if (!/^\d+$/.test(id)) continue;
+          // pct list columns: VMID  Status  [Lock]  Name
+          // Lock is optional (empty when unlocked), so name can be col 2 or 3
+          const status = parts[1] ?? "";
+          let name = "";
+          if (parts.length === 3) {
+            // VMID Status Name (no lock)
+            name = parts[2] ?? "";
+          } else if (parts.length >= 4) {
+            // VMID Status Lock Name
+            name = parts[3] ?? "";
+          } else {
+            name = id;
+          }
+          results.push({ id, name: name || id, status });
+        }
+        return results;
+      };
+
+      /** Parse `qm list` output: VMID NAME STATUS MEM BOOTDISK PID */
+      const parseQmList = (
+        output: string,
+      ): Array<{ id: string; name: string; status: string }> => {
+        const results: Array<{ id: string; name: string; status: string }> = [];
+        for (const line of output.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed || /VMID/i.test(trimmed)) continue;
+          const parts = trimmed.split(/\s+/);
+          const id = parts[0] ?? "";
+          if (!/^\d+$/.test(id)) continue;
+          const name = parts[1] ?? id;
+          const status = parts[2] ?? "";
+          results.push({ id, name: name || id, status });
+        }
+        return results;
+      };
+
+      let pctOutput = "";
+      let qmOutput = "";
+
+      await new Promise<void>((resolve) => {
+        void sshExecutionService.executeCommand(
+          server as Server,
+          "pct list",
+          (data: string) => {
+            pctOutput += data;
+          },
+          (_err: string) => {
+            resolve();
+          },
+          (_exitCode: number) => {
+            resolve();
+          },
+        );
+      });
+
+      await new Promise<void>((resolve) => {
+        void sshExecutionService.executeCommand(
+          server as Server,
+          "qm list",
+          (data: string) => {
+            qmOutput += data;
+          },
+          (_err: string) => {
+            resolve();
+          },
+          (_exitCode: number) => {
+            resolve();
+          },
+        );
+      });
+
+      return {
+        lxc: parsePctList(pctOutput),
+        vm: parseQmList(qmOutput),
+        error: null,
+      };
+    }),
 });

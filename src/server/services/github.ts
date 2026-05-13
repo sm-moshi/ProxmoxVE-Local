@@ -1,5 +1,6 @@
 import { env } from "~/env.js";
 import type { Script, ScriptCard, GitHubFile } from "~/types/script.js";
+import { logger } from "~/server/logging/logger";
 
 export class GitHubService {
   private baseUrl: string;
@@ -10,8 +11,8 @@ export class GitHubService {
   constructor() {
     this.repoUrl = env.REPO_URL ?? "";
     this.branch = env.REPO_BRANCH;
-    this.jsonFolder = process.env.JSON_FOLDER ?? 'json';
-    
+    this.jsonFolder = process.env.JSON_FOLDER ?? "json";
+
     // Only validate GitHub URL if it's provided
     if (this.repoUrl) {
       // Extract owner and repo from the URL
@@ -19,7 +20,7 @@ export class GitHubService {
       if (!urlMatch) {
         throw new Error(`Invalid GitHub repository URL: ${this.repoUrl}`);
       }
-      
+
       const [, owner, repo] = urlMatch;
       this.baseUrl = `https://api.github.com/repos/${owner}/${repo}`;
     } else {
@@ -30,24 +31,31 @@ export class GitHubService {
 
   private async fetchFromGitHub<T>(endpoint: string): Promise<T> {
     const headers: HeadersInit = {
-      'Accept': 'application/vnd.github.v3+json',
-      'User-Agent': 'PVEScripts-Local/1.0',
+      Accept: "application/vnd.github.v3+json",
+      "User-Agent": "PVEScripts-Local/1.0",
     };
-    
-    // Add GitHub token authentication if available
-    if (env.GITHUB_TOKEN) {
-      headers.Authorization = `token ${env.GITHUB_TOKEN}`;
+
+    // Add GitHub token authentication if available.
+    // Read directly from process.env so tokens saved at runtime (without restart) are picked up.
+    // Both classic PATs (ghp_) and fine-grained PATs (github_pat_) work with Bearer.
+    const githubToken = process.env.GITHUB_TOKEN;
+    if (githubToken) {
+      headers.Authorization = `Bearer ${githubToken}`;
     }
-    
+
     const response = await fetch(`${this.baseUrl}${endpoint}`, { headers });
 
     if (!response.ok) {
       if (response.status === 403) {
-        const error = new Error(`GitHub API rate limit exceeded. Consider setting GITHUB_TOKEN for higher limits. Status: ${response.status} ${response.statusText}`);
-        error.name = 'RateLimitError';
+        const error = new Error(
+          `GitHub API rate limit exceeded. Consider setting GITHUB_TOKEN for higher limits. Status: ${response.status} ${response.statusText}`,
+        );
+        error.name = "RateLimitError";
         throw error;
       }
-      throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `GitHub API error: ${response.status} ${response.statusText}`,
+      );
     }
 
     return response.json() as Promise<T>;
@@ -55,37 +63,39 @@ export class GitHubService {
 
   async getJsonFiles(): Promise<GitHubFile[]> {
     if (!this.repoUrl) {
-      throw new Error('REPO_URL environment variable is not set. Cannot fetch from GitHub.');
+      throw new Error(
+        "REPO_URL environment variable is not set. Cannot fetch from GitHub.",
+      );
     }
-    
+
     try {
       const files = await this.fetchFromGitHub<GitHubFile[]>(
-        `/contents/${this.jsonFolder}?ref=${this.branch}`
+        `/contents/${this.jsonFolder}?ref=${this.branch}`,
       );
-      
+
       // Filter for JSON files only
-      return files.filter(file => file.name.endsWith('.json'));
+      return files.filter((file) => file.name.endsWith(".json"));
     } catch (error) {
-      console.error('Error fetching JSON files from GitHub:', error);
-      throw new Error('Failed to fetch script files from repository');
+      logger.error("Error fetching JSON files from GitHub:", undefined, error);
+      throw new Error("Failed to fetch script files from repository");
     }
   }
 
   async getScriptContent(filePath: string): Promise<Script> {
     try {
       const file = await this.fetchFromGitHub<GitHubFile>(
-        `/contents/${filePath}?ref=${this.branch}`
+        `/contents/${filePath}?ref=${this.branch}`,
       );
 
       if (!file.content) {
-        throw new Error('File content is empty');
+        throw new Error("File content is empty");
       }
 
       // Decode base64 content
-      const content = Buffer.from(file.content, 'base64').toString('utf-8');
+      const content = Buffer.from(file.content, "base64").toString("utf-8");
       return JSON.parse(content) as Script;
     } catch (error) {
-      console.error('Error fetching script content:', error);
+      logger.error("Error fetching script content:", undefined, error);
       throw new Error(`Failed to fetch script: ${filePath}`);
     }
   }
@@ -100,23 +110,27 @@ export class GitHubService {
           const script = await this.getScriptContent(file.path);
           scripts.push(script);
         } catch (error) {
-          console.error(`Failed to parse script ${file.name}:`, error);
+          logger.error(
+            `Failed to parse script ${file.name}:`,
+            undefined,
+            error,
+          );
           // Continue with other files even if one fails
         }
       }
 
       return scripts;
     } catch (error) {
-      console.error('Error fetching all scripts:', error);
-      throw new Error('Failed to fetch scripts from repository');
+      logger.error("Error fetching all scripts:", undefined, error);
+      throw new Error("Failed to fetch scripts from repository");
     }
   }
 
   async getScriptCards(): Promise<ScriptCard[]> {
     try {
       const scripts = await this.getAllScripts();
-      
-      return scripts.map(script => ({
+
+      return scripts.map((script) => ({
         name: script.name,
         slug: script.slug,
         description: script.description,
@@ -126,17 +140,17 @@ export class GitHubService {
         website: script.website,
       }));
     } catch (error) {
-      console.error('Error creating script cards:', error);
-      throw new Error('Failed to create script cards');
+      logger.error("Error creating script cards:", undefined, error);
+      throw new Error("Failed to create script cards");
     }
   }
 
   async getScriptBySlug(slug: string): Promise<Script | null> {
     try {
       const scripts = await this.getAllScripts();
-      return scripts.find(script => script.slug === slug) ?? null;
+      return scripts.find((script) => script.slug === slug) ?? null;
     } catch (error) {
-      console.error('Error fetching script by slug:', error);
+      logger.error("Error fetching script by slug:", undefined, error);
       throw new Error(`Failed to fetch script: ${slug}`);
     }
   }

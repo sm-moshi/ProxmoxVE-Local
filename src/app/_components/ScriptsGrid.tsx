@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { api } from "~/trpc/react";
 import { ScriptCard } from "./ScriptCard";
 import { ScriptCardList } from "./ScriptCardList";
@@ -11,17 +11,31 @@ import { ViewToggle } from "./ViewToggle";
 import { Button } from "./ui/button";
 import { Clock } from "lucide-react";
 import type { ScriptCard as ScriptCardType } from "~/types/script";
+import type { Server } from "~/types/server";
 import { getDefaultFilters, mergeFiltersWithDefaults } from "./filterUtils";
+import { useShell } from "./ShellContext";
 
-interface ScriptsGridProps {
-  onInstallScript?: (scriptPath: string, scriptName: string) => void;
-}
+type InstalledContainerShell = {
+  id: number;
+  script_name: string;
+  container_id: string;
+  status: string;
+  is_vm?: boolean | null;
+  server_id?: number | null;
+  server_name?: string | null;
+  server_ip?: string | null;
+  server_user?: string | null;
+  server_password?: string | null;
+  server_auth_type?: Server["auth_type"] | null;
+  server_ssh_key?: string | null;
+  server_ssh_key_passphrase?: string | null;
+  server_ssh_port?: number | null;
+};
 
-export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
+export function ScriptsGrid() {
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"card" | "list">("card");
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(new Set());
   const [downloadProgress, setDownloadProgress] = useState<{
@@ -33,8 +47,29 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
   const [filters, setFilters] = useState<FilterState>(getDefaultFilters());
   const [saveFiltersEnabled, setSaveFiltersEnabled] = useState(false);
   const [isLoadingFilters, setIsLoadingFilters] = useState(true);
+
+  // ProxmoxVED / dev scripts visibility setting
+  const [showDevScripts, setShowDevScripts] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("showDevScripts") === "true";
+  });
+
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "showDevScripts") {
+        setShowDevScripts(e.newValue === "true");
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
   const [isNewestMinimized, setIsNewestMinimized] = useState(false);
+  const downloadAbortRef = useRef(false);
+  const filtersInitRef = useRef(false);
+  const viewModeInitRef = useRef(false);
   const gridRef = useRef<HTMLDivElement>(null);
+
+  const utils = api.useUtils();
 
   const {
     data: scriptCardsData,
@@ -47,6 +82,9 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
     isLoading: localLoading,
     error: localError,
   } = api.scripts.getAllDownloadedScripts.useQuery();
+  const { data: installedScriptsData } =
+    api.installedScripts.getAllInstalledScripts.useQuery();
+  const { open: openShell } = useShell();
   const { data: scriptData } = api.scripts.getScriptBySlug.useQuery(
     { slug: selectedSlug ?? "" },
     { enabled: !!selectedSlug },
@@ -107,6 +145,11 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
   // Save filters when they change (if SAVE_FILTER is enabled)
   useEffect(() => {
     if (!saveFiltersEnabled || isLoadingFilters) return;
+    // Skip the first fire after load — values haven't changed yet
+    if (!filtersInitRef.current) {
+      filtersInitRef.current = true;
+      return;
+    }
 
     const saveFilters = async () => {
       try {
@@ -130,6 +173,11 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
   // Save view mode when it changes
   useEffect(() => {
     if (isLoadingFilters) return;
+    // Skip the first fire after load — value hasn't changed yet
+    if (!viewModeInitRef.current) {
+      viewModeInitRef.current = true;
+      return;
+    }
 
     const saveViewMode = async () => {
       try {
@@ -216,6 +264,34 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
     return counts;
   }, [categories, combinedScripts, scriptCardsData?.success]);
 
+  // Count dev scripts per category
+  const categoryDevCounts = React.useMemo((): Record<string, number> => {
+    if (!scriptCardsData?.success) return {};
+
+    const counts: Record<string, number> = {};
+    categories.forEach((name: string) => {
+      counts[name] = 0;
+    });
+
+    combinedScripts.forEach((script) => {
+      if (script.is_dev && script.categoryNames && script.slug) {
+        const counted = new Set<string>();
+        script.categoryNames.forEach((cat: unknown) => {
+          if (
+            typeof cat === "string" &&
+            counts[cat] !== undefined &&
+            !counted.has(cat)
+          ) {
+            counted.add(cat);
+            counts[cat]++;
+          }
+        });
+      }
+    });
+
+    return counts;
+  }, [categories, combinedScripts, scriptCardsData?.success]);
+
   // Update scripts with download status
   const scriptsWithStatus = React.useMemo((): ScriptCardType[] => {
     // Helper to normalize identifiers for robust matching
@@ -270,14 +346,17 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
       filters.selectedRepositories.length > 0 ||
       filters.sortBy !== "name" ||
       filters.sortOrder !== "asc" ||
-      selectedCategory !== null
+      (filters.quickFilter && filters.quickFilter !== "all") ||
+      filters.selectedCategory !== null
     );
-  }, [filters, selectedCategory]);
+  }, [filters]);
 
   // Get the 6 newest scripts based on date_created field
   const newestScripts = React.useMemo((): ScriptCardType[] => {
     return scriptsWithStatus
-      .filter((script) => script?.date_created) // Only scripts with date_created
+      .filter(
+        (script) => script?.date_created && (showDevScripts || !script?.is_dev),
+      ) // Never show dev in newest unless ProxmoxVED enabled
       .sort((a, b) => {
         const aCreated = a?.date_created ?? "";
         const bCreated = b?.date_created ?? "";
@@ -285,11 +364,16 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
         return bCreated.localeCompare(aCreated);
       })
       .slice(0, 6); // Take only the first 6
-  }, [scriptsWithStatus]);
+  }, [scriptsWithStatus, showDevScripts]);
 
   // Filter scripts based on all filters and category
   const filteredScripts = React.useMemo((): ScriptCardType[] => {
     let scripts = scriptsWithStatus;
+
+    // Hide dev scripts entirely when ProxmoxVED is disabled
+    if (!showDevScripts) {
+      scripts = scripts.filter((s) => !s?.is_dev);
+    }
 
     // Filter by search query (use filters.searchQuery instead of deprecated searchQuery)
     if (filters.searchQuery?.trim()) {
@@ -310,12 +394,14 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
     }
 
     // Filter by category using real category data from deduplicated scripts
-    if (selectedCategory) {
+    if (filters.selectedCategory) {
       scripts = scripts.filter((script) => {
         if (!script) return false;
 
         // Check if the deduplicated script has categoryNames that include the selected category
-        return script.categoryNames?.includes(selectedCategory) ?? false;
+        return (
+          script.categoryNames?.includes(filters.selectedCategory!) ?? false
+        );
       });
     }
 
@@ -333,14 +419,39 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
       scripts = scripts.filter((script) => {
         if (!script) return false;
         const scriptType = (script.type ?? "").toLowerCase();
-
-        // Map non-standard types to standard categories
-        const mappedType = scriptType === "turnkey" ? "ct" : scriptType;
-
-        return filters.selectedTypes.some(
-          (type) => type.toLowerCase() === mappedType,
-        );
+        return filters.selectedTypes.some((type) => {
+          const t = type.toLowerCase();
+          if (t === "ct") return scriptType === "ct" || scriptType === "lxc";
+          return scriptType === t;
+        });
       });
+    }
+
+    // Apply quick filter
+    if (filters.quickFilter && filters.quickFilter !== "all") {
+      switch (filters.quickFilter) {
+        case "new":
+          scripts = scripts
+            .filter((s) => s?.date_created)
+            .sort((a, b) =>
+              (b?.date_created ?? "").localeCompare(a?.date_created ?? ""),
+            )
+            .slice(0, 15);
+          break;
+        case "updated":
+          scripts = scripts
+            .filter((s) => s?.date_updated)
+            .sort((a, b) =>
+              (b?.date_updated ?? "").localeCompare(a?.date_updated ?? ""),
+            );
+          break;
+        case "dev":
+          scripts = scripts.filter((s) => s?.is_dev === true);
+          break;
+        case "arm":
+          scripts = scripts.filter((s) => s?.has_arm === true);
+          break;
+      }
     }
 
     // Exclude newest scripts from main grid when no filters are active (they'll be shown in carousel)
@@ -381,6 +492,20 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
             compareValue = (a.name ?? "").localeCompare(b.name ?? "");
           }
           break;
+        case "updated":
+          // Sort by date_created as proxy for "last updated"
+          const aUpdated = a?.date_created ?? "";
+          const bUpdated = b?.date_created ?? "";
+          if (aUpdated && bUpdated) {
+            compareValue = aUpdated.localeCompare(bUpdated);
+          } else if (aUpdated && !bUpdated) {
+            compareValue = -1;
+          } else if (!aUpdated && bUpdated) {
+            compareValue = 1;
+          } else {
+            compareValue = (a.name ?? "").localeCompare(b.name ?? "");
+          }
+          break;
         default:
           compareValue = (a.name ?? "").localeCompare(b.name ?? "");
       }
@@ -393,9 +518,9 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
   }, [
     scriptsWithStatus,
     filters,
-    selectedCategory,
     hasActiveFilters,
     newestScripts,
+    showDevScripts,
   ]);
 
   // Calculate filter counts for FilterBar
@@ -425,7 +550,7 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
   };
 
   // Selection management functions
-  const toggleScriptSelection = (slug: string) => {
+  const toggleScriptSelection = useCallback((slug: string) => {
     setSelectedSlugs((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(slug)) {
@@ -435,7 +560,7 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
       }
       return newSet;
     });
-  };
+  }, []);
 
   const selectAllVisible = () => {
     const visibleSlugs = new Set(
@@ -532,6 +657,7 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
   };
 
   const downloadScriptsIndividually = async (slugsToDownload: string[]) => {
+    downloadAbortRef.current = false;
     setDownloadProgress({
       current: 0,
       total: slugsToDownload.length,
@@ -543,6 +669,7 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
     const failed: Array<{ slug: string; error: string }> = [];
 
     for (let i = 0; i < slugsToDownload.length; i++) {
+      if (downloadAbortRef.current) break;
       const slug = slugsToDownload[i];
 
       // Update progress with current script
@@ -601,6 +728,7 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
     // Clear selection and refetch to update card download status
     setSelectedSlugs(new Set());
     void refetch();
+    void utils.scripts.getAllDownloadedScripts.invalidate();
 
     // Keep progress bar visible until user navigates away or manually dismisses
     // Progress bar will stay visible to show final results
@@ -644,12 +772,12 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
 
   // Handle category selection with auto-scroll
   const handleCategorySelect = (category: string | null) => {
-    setSelectedCategory(category);
+    handleFiltersChange({ ...filters, selectedCategory: category });
   };
 
   // Auto-scroll effect when category changes
   useEffect(() => {
-    if (selectedCategory && gridRef.current) {
+    if (filters.selectedCategory && gridRef.current) {
       const timeoutId = setTimeout(() => {
         gridRef.current?.scrollIntoView({
           behavior: "smooth",
@@ -660,7 +788,7 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
 
       return () => clearTimeout(timeoutId);
     }
-  }, [selectedCategory]);
+  }, [filters.selectedCategory]);
 
   // Clear selection when switching between card/list views
   useEffect(() => {
@@ -674,16 +802,71 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
     };
   }, []);
 
-  const handleCardClick = (scriptCard: ScriptCardType) => {
+  const handleCardClick = useCallback((scriptCard: ScriptCardType) => {
     // All scripts are GitHub scripts, open modal
     setSelectedSlug(scriptCard.slug);
     setIsModalOpen(true);
-  };
+  }, []);
 
-  const handleCloseModal = () => {
+  const normalizeSlug = (s?: string): string =>
+    (s ?? "")
+      .toLowerCase()
+      .replace(/\.(sh|bash|py|js|ts)$/i, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+  // Map normalized slug → first installed container with a container_id
+  const installedContainerMap = React.useMemo((): Map<
+    string,
+    InstalledContainerShell
+  > => {
+    const map = new Map<string, InstalledContainerShell>();
+    const scripts = (installedScriptsData?.scripts ??
+      []) as InstalledContainerShell[];
+    for (const s of scripts) {
+      if (!s.container_id || s.status === "failed") continue;
+      const key = normalizeSlug(s.script_name);
+      if (!map.has(key)) map.set(key, s);
+    }
+    return map;
+  }, [installedScriptsData]);
+
+  const handleShellClick = useCallback(
+    (script: ScriptCardType) => {
+      const container = installedContainerMap.get(normalizeSlug(script.slug));
+      if (!container) return;
+      const server =
+        container.server_id && container.server_user
+          ? {
+              id: container.server_id,
+              name: container.server_name ?? "",
+              ip: container.server_ip ?? "",
+              user: container.server_user,
+              password: container.server_password ?? undefined,
+              auth_type: container.server_auth_type ?? "password",
+              ssh_key: container.server_ssh_key ?? undefined,
+              ssh_key_passphrase:
+                container.server_ssh_key_passphrase ?? undefined,
+              ssh_port: container.server_ssh_port ?? 22,
+              created_at: null,
+              updated_at: null,
+            }
+          : undefined;
+      openShell({
+        containerId: container.container_id,
+        containerName: container.script_name,
+        server,
+        containerType: container.is_vm ? "vm" : "lxc",
+      });
+    },
+
+    [installedContainerMap, openShell],
+  );
+
+  const handleCloseModal = useCallback(() => {
     setIsModalOpen(false);
     setSelectedSlug(null);
-  };
+  }, []);
 
   if (githubLoading || localLoading) {
     return (
@@ -763,9 +946,11 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
         <CategorySidebar
           categories={categories}
           categoryCounts={categoryCounts}
+          categoryDevCounts={categoryDevCounts}
           totalScripts={scriptsWithStatus.length}
-          selectedCategory={selectedCategory}
+          selectedCategory={filters.selectedCategory}
           onCategorySelect={handleCategorySelect}
+          showDevScripts={showDevScripts}
         />
       </div>
 
@@ -780,13 +965,16 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
           updatableCount={filterCounts.updatableCount}
           saveFiltersEnabled={saveFiltersEnabled}
           isLoadingFilters={isLoadingFilters}
+          categories={categories}
+          categoryCounts={categoryCounts}
+          showDevScripts={showDevScripts}
         />
 
         {/* View Toggle */}
         <ViewToggle viewMode={viewMode} onViewModeChange={setViewMode} />
 
         {/* Newest Scripts Carousel - Only show when no search, filters, or category is active */}
-        {newestScripts.length > 0 && !hasActiveFilters && !selectedCategory && (
+        {newestScripts.length > 0 && !hasActiveFilters && (
           <div className="mb-8">
             <div className="bg-card border-l-primary border-border rounded-lg border border-l-4 p-6 shadow-lg">
               <div className="mb-4 flex items-center justify-between">
@@ -850,6 +1038,13 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
                               onClick={handleCardClick}
                               isSelected={selectedSlugs.has(script.slug ?? "")}
                               onToggleSelect={toggleScriptSelection}
+                              onShell={
+                                installedContainerMap.has(
+                                  normalizeSlug(script.slug),
+                                )
+                                  ? () => handleShellClick(script)
+                                  : undefined
+                              }
                             />
                             {/* NEW badge */}
                             <div className="bg-success text-success-foreground absolute top-2 right-2 z-10 rounded-md px-2 py-1 text-xs font-semibold shadow-md">
@@ -921,7 +1116,7 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
 
         {/* Progress Bar */}
         {downloadProgress && (
-          <div className="bg-card border-border mb-4 rounded-lg border p-4">
+          <div className="glass-card-static mb-4 border p-4">
             <div className="mb-2 flex items-center justify-between">
               <div className="flex flex-col">
                 <span className="text-foreground text-sm font-medium">
@@ -944,6 +1139,17 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
                   )}
                   %
                 </span>
+                {downloadProgress.current < downloadProgress.total && (
+                  <button
+                    onClick={() => {
+                      downloadAbortRef.current = true;
+                    }}
+                    className="text-destructive hover:text-destructive/80 text-xs font-medium transition-colors"
+                    title="Cancel download"
+                  >
+                    Cancel
+                  </button>
+                )}
                 {downloadProgress.current >= downloadProgress.total && (
                   <button
                     onClick={() => setDownloadProgress(null)}
@@ -1095,20 +1301,24 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
               </button>
             )}
           </div>
-          {(searchQuery || selectedCategory) && (
+          {(searchQuery || filters.selectedCategory) && (
             <div className="text-muted-foreground mt-2 text-center text-sm">
               {filteredScripts.length === 0 ? (
                 <span>
                   No scripts found
                   {searchQuery ? ` matching "${searchQuery}"` : ""}
-                  {selectedCategory ? ` in category "${selectedCategory}"` : ""}
+                  {filters.selectedCategory
+                    ? ` in category "${filters.selectedCategory}"`
+                    : ""}
                 </span>
               ) : (
                 <span>
                   Found {filteredScripts.length} script
                   {filteredScripts.length !== 1 ? "s" : ""}
                   {searchQuery ? ` matching "${searchQuery}"` : ""}
-                  {selectedCategory ? ` in category "${selectedCategory}"` : ""}
+                  {filters.selectedCategory
+                    ? ` in category "${filters.selectedCategory}"`
+                    : ""}
                 </span>
               )}
             </div>
@@ -1118,7 +1328,7 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
         {/* Scripts Grid */}
         {filteredScripts.length === 0 &&
         (filters.searchQuery ||
-          selectedCategory ||
+          filters.selectedCategory ||
           filters.showUpdatable !== null ||
           filters.selectedTypes.length > 0) ? (
           <div className="py-12 text-center">
@@ -1152,7 +1362,7 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
                     Clear Search
                   </Button>
                 )}
-                {selectedCategory && (
+                {filters.selectedCategory && (
                   <Button
                     onClick={() => handleCategorySelect(null)}
                     variant="secondary"
@@ -1182,6 +1392,11 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
                   onClick={handleCardClick}
                   isSelected={selectedSlugs.has(script.slug ?? "")}
                   onToggleSelect={toggleScriptSelection}
+                  onShell={
+                    installedContainerMap.has(normalizeSlug(script.slug))
+                      ? () => handleShellClick(script)
+                      : undefined
+                  }
                 />
               );
             })}
@@ -1204,6 +1419,11 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
                   onClick={handleCardClick}
                   isSelected={selectedSlugs.has(script.slug ?? "")}
                   onToggleSelect={toggleScriptSelection}
+                  onShell={
+                    installedContainerMap.has(normalizeSlug(script.slug))
+                      ? () => handleShellClick(script)
+                      : undefined
+                  }
                 />
               );
             })}
@@ -1214,7 +1434,11 @@ export function ScriptsGrid({ onInstallScript }: ScriptsGridProps) {
           script={scriptData?.success ? scriptData.script : null}
           isOpen={isModalOpen}
           onClose={handleCloseModal}
-          onInstallScript={onInstallScript}
+          orderedSlugs={[
+            ...(!hasActiveFilters ? newestScripts.map((s) => s.slug) : []),
+            ...filteredScripts.map((s) => s.slug),
+          ]}
+          onSelectSlug={(slug) => setSelectedSlug(slug)}
         />
       </div>
     </div>

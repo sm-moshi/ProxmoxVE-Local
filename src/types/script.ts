@@ -57,6 +57,8 @@ export interface Script {
   is_deleted?: boolean;
   has_arm?: boolean;
   version?: string | null;
+  /** Environments the script must execute in: "pve", "lxc", "vm", "pbs", "pmg". */
+  execute_in?: string[] | null;
   /** Only present for user-defined local scripts. */
   repository_url?: string;
 }
@@ -76,6 +78,7 @@ export interface ScriptCard {
   /** Category names for display / filtering. */
   categoryNames?: string[];
   date_created?: string;
+  date_updated?: string;
   os?: string;
   version?: string;
   interface_port?: number | null;

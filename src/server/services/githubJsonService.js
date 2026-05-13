@@ -1,15 +1,16 @@
 // JavaScript wrapper for githubJsonService (for use with node server.js)
-import { writeFile, mkdir, readdir, readFile, unlink } from 'fs/promises';
-import { join } from 'path';
-import { repositoryService } from './repositoryService.js';
-import { listDirectory, downloadRawFile } from '../lib/gitProvider/index.js';
+import { writeFile, mkdir, readdir, readFile, unlink } from "fs/promises";
+import { join } from "path";
+import { repositoryService } from "./repositoryService.js";
+import { listDirectory, downloadRawFile } from "../lib/gitProvider/index.js";
 
 // Get environment variables
 const getEnv = () => ({
-  REPO_BRANCH: process.env.REPO_BRANCH || 'main',
-  JSON_FOLDER: process.env.JSON_FOLDER || 'json',
-  REPO_URL: process.env.REPO_URL || 'https://github.com/community-scripts/ProxmoxVE',
-  GITHUB_TOKEN: process.env.GITHUB_TOKEN
+  REPO_BRANCH: process.env.REPO_BRANCH || "main",
+  JSON_FOLDER: process.env.JSON_FOLDER || "json",
+  REPO_URL:
+    process.env.REPO_URL || "https://github.com/community-scripts/ProxmoxVE",
+  GITHUB_TOKEN: process.env.GITHUB_TOKEN,
 });
 
 class GitHubJsonService {
@@ -25,7 +26,7 @@ class GitHubJsonService {
       const env = getEnv();
       this.branch = env.REPO_BRANCH;
       this.jsonFolder = env.JSON_FOLDER;
-      this.localJsonDirectory = join(process.cwd(), 'scripts', 'json');
+      this.localJsonDirectory = join(process.cwd(), "scripts", "json");
     }
   }
 
@@ -40,13 +41,22 @@ class GitHubJsonService {
   async getJsonFiles(repoUrl) {
     this.initializeConfig();
     try {
-      const entries = await listDirectory(repoUrl, this.jsonFolder, this.branch);
+      const entries = await listDirectory(
+        repoUrl,
+        this.jsonFolder,
+        this.branch,
+      );
       return entries
-        .filter((e) => e.type === 'file' && e.name.endsWith('.json'))
+        .filter((e) => e.type === "file" && e.name.endsWith(".json"))
         .map((e) => ({ name: e.name, path: e.path }));
     } catch (error) {
-      console.error(`Error fetching JSON files from repository (${repoUrl}):`, error);
-      throw new Error(`Failed to fetch script files from repository: ${repoUrl}`);
+      console.error(
+        `Error fetching JSON files from repository (${repoUrl}):`,
+        error,
+      );
+      throw new Error(
+        `Failed to fetch script files from repository: ${repoUrl}`,
+      );
     }
   }
 
@@ -60,7 +70,10 @@ class GitHubJsonService {
           const script = await this.downloadJsonFile(repoUrl, file.path);
           scripts.push(script);
         } catch (error) {
-          console.error(`Failed to download script ${file.name} from ${repoUrl}:`, error);
+          console.error(
+            `Failed to download script ${file.name} from ${repoUrl}:`,
+            error,
+          );
         }
       }
 
@@ -74,8 +87,8 @@ class GitHubJsonService {
   async getScriptCards(repoUrl) {
     try {
       const scripts = await this.getAllScripts(repoUrl);
-      
-      return scripts.map(script => ({
+
+      return scripts.map((script) => ({
         name: script.name,
         slug: script.slug,
         description: script.description,
@@ -87,7 +100,9 @@ class GitHubJsonService {
       }));
     } catch (error) {
       console.error(`Error creating script cards from ${repoUrl}:`, error);
-      throw new Error(`Failed to create script cards from repository: ${repoUrl}`);
+      throw new Error(
+        `Failed to create script cards from repository: ${repoUrl}`,
+      );
     }
   }
 
@@ -104,7 +119,10 @@ class GitHubJsonService {
       if (repoUrl) {
         try {
           this.initializeConfig();
-          const script = await this.downloadJsonFile(repoUrl, `${this.jsonFolder}/${slug}.json`);
+          const script = await this.downloadJsonFile(
+            repoUrl,
+            `${this.jsonFolder}/${slug}.json`,
+          );
           return script;
         } catch {
           return null;
@@ -115,7 +133,10 @@ class GitHubJsonService {
       for (const repo of enabledRepos) {
         try {
           this.initializeConfig();
-          const script = await this.downloadJsonFile(repo.url, `${this.jsonFolder}/${slug}.json`);
+          const script = await this.downloadJsonFile(
+            repo.url,
+            `${this.jsonFolder}/${slug}.json`,
+          );
           return script;
         } catch {
           // Continue to next repo
@@ -124,7 +145,7 @@ class GitHubJsonService {
 
       return null;
     } catch (error) {
-      console.error('Error fetching script by slug:', error);
+      console.error("Error fetching script by slug:", error);
       throw new Error(`Failed to fetch script: ${slug}`);
     }
   }
@@ -137,16 +158,16 @@ class GitHubJsonService {
 
       this.initializeConfig();
       const filePath = join(this.localJsonDirectory, `${slug}.json`);
-      const content = await readFile(filePath, 'utf-8');
+      const content = await readFile(filePath, "utf-8");
       const script = JSON.parse(content);
-      
+
       if (!script.repository_url) {
         const env = getEnv();
         script.repository_url = env.REPO_URL;
       }
-      
+
       this.scriptCache.set(slug, script);
-      
+
       return script;
     } catch {
       return null;
@@ -156,23 +177,36 @@ class GitHubJsonService {
   async syncJsonFilesForRepo(repoUrl) {
     try {
       console.log(`Starting JSON sync from repository: ${repoUrl}`);
-      
+
       const githubFiles = await this.getJsonFiles(repoUrl);
-      console.log(`Found ${githubFiles.length} JSON files in repository ${repoUrl}`);
-      
+      console.log(
+        `Found ${githubFiles.length} JSON files in repository ${repoUrl}`,
+      );
+
       const localFiles = await this.getLocalJsonFiles();
       console.log(`Found ${localFiles.length} local JSON files`);
-      
+
       // Delete local JSON files that belong to this repo but are no longer in the remote
       const remoteFilenames = new Set(githubFiles.map((f) => f.name));
-      const deletedFiles = await this.deleteLocalFilesRemovedFromRepo(repoUrl, remoteFilenames);
+      const deletedFiles = await this.deleteLocalFilesRemovedFromRepo(
+        repoUrl,
+        remoteFilenames,
+      );
       if (deletedFiles.length > 0) {
-        console.log(`Removed ${deletedFiles.length} obsolete JSON file(s) no longer in ${repoUrl}`);
+        console.log(
+          `Removed ${deletedFiles.length} obsolete JSON file(s) no longer in ${repoUrl}`,
+        );
       }
-      
-      const filesToSync = await this.findFilesToSyncForRepo(repoUrl, githubFiles, localFiles);
-      console.log(`Found ${filesToSync.length} files that need syncing from ${repoUrl}`);
-      
+
+      const filesToSync = await this.findFilesToSyncForRepo(
+        repoUrl,
+        githubFiles,
+        localFiles,
+      );
+      console.log(
+        `Found ${filesToSync.length} files that need syncing from ${repoUrl}`,
+      );
+
       if (filesToSync.length === 0) {
         const msg =
           deletedFiles.length > 0
@@ -183,12 +217,12 @@ class GitHubJsonService {
           message: msg,
           count: 0,
           syncedFiles: [],
-          deletedFiles
+          deletedFiles,
         };
       }
-      
+
       const syncedFiles = await this.syncSpecificFiles(repoUrl, filesToSync);
-      
+
       const msg =
         deletedFiles.length > 0
           ? `Successfully synced ${syncedFiles.length} JSON files from ${repoUrl}, removed ${deletedFiles.length} obsolete file(s).`
@@ -198,38 +232,38 @@ class GitHubJsonService {
         message: msg,
         count: syncedFiles.length,
         syncedFiles,
-        deletedFiles
+        deletedFiles,
       };
     } catch (error) {
       console.error(`JSON sync failed for ${repoUrl}:`, error);
       return {
         success: false,
-        message: `Failed to sync JSON files from ${repoUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        message: `Failed to sync JSON files from ${repoUrl}: ${error instanceof Error ? error.message : "Unknown error"}`,
         count: 0,
         syncedFiles: [],
-        deletedFiles: []
+        deletedFiles: [],
       };
     }
   }
 
   async syncJsonFiles() {
     try {
-      console.log('Starting multi-repository JSON sync...');
-      
+      console.log("Starting multi-repository JSON sync...");
+
       const enabledRepos = await repositoryService.getEnabledRepositories();
-      
+
       if (enabledRepos.length === 0) {
         return {
           success: false,
-          message: 'No enabled repositories found',
+          message: "No enabled repositories found",
           count: 0,
           syncedFiles: [],
-          deletedFiles: []
+          deletedFiles: [],
         };
       }
 
       console.log(`Found ${enabledRepos.length} enabled repositories`);
-      
+
       const allSyncedFiles = [];
       const allDeletedFiles = [];
       const processedSlugs = new Set();
@@ -237,21 +271,23 @@ class GitHubJsonService {
 
       for (const repo of enabledRepos) {
         try {
-          console.log(`Syncing from repository: ${repo.url} (priority: ${repo.priority})`);
-          
+          console.log(
+            `Syncing from repository: ${repo.url} (priority: ${repo.priority})`,
+          );
+
           const result = await this.syncJsonFilesForRepo(repo.url);
-          
+
           if (result.success) {
             allDeletedFiles.push(...(result.deletedFiles ?? []));
-            const newFiles = result.syncedFiles.filter(file => {
-              const slug = file.replace('.json', '');
+            const newFiles = result.syncedFiles.filter((file) => {
+              const slug = file.replace(".json", "");
               if (processedSlugs.has(slug)) {
                 return false;
               }
               processedSlugs.add(slug);
               return true;
             });
-            
+
             allSyncedFiles.push(...newFiles);
             totalSynced += newFiles.length;
           } else {
@@ -273,16 +309,16 @@ class GitHubJsonService {
         message: msg,
         count: totalSynced,
         syncedFiles: allSyncedFiles,
-        deletedFiles: allDeletedFiles
+        deletedFiles: allDeletedFiles,
       };
     } catch (error) {
-      console.error('Multi-repository JSON sync failed:', error);
+      console.error("Multi-repository JSON sync failed:", error);
       return {
         success: false,
-        message: `Failed to sync JSON files: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        message: `Failed to sync JSON files: ${error instanceof Error ? error.message : "Unknown error"}`,
         count: 0,
         syncedFiles: [],
-        deletedFiles: []
+        deletedFiles: [],
       };
     }
   }
@@ -293,16 +329,16 @@ class GitHubJsonService {
       const files = await this.getLocalJsonFiles();
       const env = getEnv();
       const mainRepoUrl = env.REPO_URL;
-      
+
       for (const file of files) {
         try {
           const filePath = join(this.localJsonDirectory, file);
-          const content = await readFile(filePath, 'utf-8');
+          const content = await readFile(filePath, "utf-8");
           const script = JSON.parse(content);
-          
+
           if (!script.repository_url) {
             script.repository_url = mainRepoUrl;
-            await writeFile(filePath, JSON.stringify(script, null, 2), 'utf-8');
+            await writeFile(filePath, JSON.stringify(script, null, 2), "utf-8");
             console.log(`Updated ${file} with repository_url: ${mainRepoUrl}`);
           }
         } catch (error) {
@@ -310,7 +346,10 @@ class GitHubJsonService {
         }
       }
     } catch (error) {
-      console.error('Error updating existing files with repository_url:', error);
+      console.error(
+        "Error updating existing files with repository_url:",
+        error,
+      );
     }
   }
 
@@ -318,7 +357,7 @@ class GitHubJsonService {
     this.initializeConfig();
     try {
       const files = await readdir(this.localJsonDirectory);
-      return files.filter(f => f.endsWith('.json'));
+      return files.filter((f) => f.endsWith(".json"));
     } catch {
       return [];
     }
@@ -332,15 +371,17 @@ class GitHubJsonService {
     for (const file of localFiles) {
       try {
         const filePath = join(this.localJsonDirectory, file);
-        const content = await readFile(filePath, 'utf-8');
+        const content = await readFile(filePath, "utf-8");
         const script = JSON.parse(content);
 
         if (script.repository_url === repoUrl && !remoteFilenames.has(file)) {
           await unlink(filePath);
-          const slug = file.replace(/\.json$/, '');
+          const slug = file.replace(/\.json$/, "");
           this.scriptCache.delete(slug);
           deletedFiles.push(file);
-          console.log(`Removed obsolete script JSON: ${file} (no longer in ${repoUrl})`);
+          console.log(
+            `Removed obsolete script JSON: ${file} (no longer in ${repoUrl})`,
+          );
         }
       } catch {
         // If we can't read or parse the file, skip (do not delete)
@@ -352,19 +393,19 @@ class GitHubJsonService {
 
   async findFilesToSyncForRepo(repoUrl, githubFiles, localFiles) {
     const filesToSync = [];
-    
+
     for (const ghFile of githubFiles) {
       const localFilePath = join(this.localJsonDirectory, ghFile.name);
-      
+
       let needsSync = false;
-      
+
       if (!localFiles.includes(ghFile.name)) {
         needsSync = true;
       } else {
         try {
-          const content = await readFile(localFilePath, 'utf-8');
+          const content = await readFile(localFilePath, "utf-8");
           const script = JSON.parse(content);
-          
+
           if (!script.repository_url || script.repository_url !== repoUrl) {
             needsSync = true;
           }
@@ -372,38 +413,38 @@ class GitHubJsonService {
           needsSync = true;
         }
       }
-      
+
       if (needsSync) {
         filesToSync.push(ghFile);
       }
     }
-    
+
     return filesToSync;
   }
 
   async syncSpecificFiles(repoUrl, filesToSync) {
     this.initializeConfig();
     const syncedFiles = [];
-    
+
     await mkdir(this.localJsonDirectory, { recursive: true });
-    
+
     for (const file of filesToSync) {
       try {
         const script = await this.downloadJsonFile(repoUrl, file.path);
         const filename = `${script.slug}.json`;
         const filePath = join(this.localJsonDirectory, filename);
-        
+
         script.repository_url = repoUrl;
-        
-        await writeFile(filePath, JSON.stringify(script, null, 2), 'utf-8');
+
+        await writeFile(filePath, JSON.stringify(script, null, 2), "utf-8");
         syncedFiles.push(filename);
-        
+
         this.scriptCache.delete(script.slug);
       } catch (error) {
         console.error(`Failed to sync ${file.name} from ${repoUrl}:`, error);
       }
     }
-    
+
     return syncedFiles;
   }
 }

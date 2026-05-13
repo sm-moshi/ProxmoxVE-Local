@@ -1,15 +1,18 @@
-import type { NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
-import { comparePassword, generateToken, getAuthConfig } from '~/lib/auth';
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import { comparePassword, generateToken, getAuthConfig } from "~/lib/auth";
 
 export async function POST(request: NextRequest) {
   try {
-    const { username, password } = await request.json() as { username: string; password: string };
+    const { username, password } = (await request.json()) as {
+      username: string;
+      password: string;
+    };
 
     if (!username || !password) {
       return NextResponse.json(
-        { error: 'Username and password are required' },
-        { status: 400 }
+        { error: "Username and password are required" },
+        { status: 400 },
       );
     }
 
@@ -17,24 +20,27 @@ export async function POST(request: NextRequest) {
 
     if (!authConfig.hasCredentials) {
       return NextResponse.json(
-        { error: 'Authentication not configured' },
-        { status: 400 }
+        { error: "Authentication not configured" },
+        { status: 400 },
       );
     }
 
     if (username !== authConfig.username) {
       return NextResponse.json(
-        { error: 'Invalid credentials' },
-        { status: 401 }
+        { error: "Invalid credentials" },
+        { status: 401 },
       );
     }
 
-    const isValidPassword = await comparePassword(password, authConfig.passwordHash!);
-    
+    const isValidPassword = await comparePassword(
+      password,
+      authConfig.passwordHash!,
+    );
+
     if (!isValidPassword) {
       return NextResponse.json(
-        { error: 'Invalid credentials' },
-        { status: 401 }
+        { error: "Invalid credentials" },
+        { status: 401 },
       );
     }
 
@@ -42,33 +48,34 @@ export async function POST(request: NextRequest) {
     const token = generateToken(username, sessionDurationDays);
 
     // Calculate expiration time for client
-    const expirationTime = Date.now() + (sessionDurationDays * 24 * 60 * 60 * 1000);
+    const expirationTime =
+      Date.now() + sessionDurationDays * 24 * 60 * 60 * 1000;
 
-    const response = NextResponse.json({ 
-      success: true, 
-      message: 'Login successful',
+    const response = NextResponse.json({
+      success: true,
+      message: "Login successful",
       username,
-      expirationTime
+      expirationTime,
     });
 
     // Determine if request is over HTTPS
-    const isSecure = request.url.startsWith('https://');
+    const isSecure = request.url.startsWith("https://");
 
     // Set httpOnly cookie with configured duration
-    response.cookies.set('auth-token', token, {
+    response.cookies.set("auth-token", token, {
       httpOnly: true,
       secure: isSecure, // Only secure if actually over HTTPS
-      sameSite: 'lax', // Use lax for cross-origin navigation support
+      sameSite: "lax", // Use lax for cross-origin navigation support
       maxAge: sessionDurationDays * 24 * 60 * 60, // Use configured duration
-      path: '/',
+      path: "/",
     });
 
     return response;
   } catch (error) {
-    console.error('Error during login:', error);
+    console.error("Error during login:", error);
     return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
+      { error: "Internal server error" },
+      { status: 500 },
     );
   }
 }

@@ -1,12 +1,13 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import type { Server, CreateServerData } from '../../types/server';
-import { ServerForm } from './ServerForm';
-import { ServerList } from './ServerList';
-import { Button } from './ui/button';
-import { ContextualHelpIcon } from './ContextualHelpIcon';
-import { useRegisterModal } from './modal/ModalStackProvider';
+import { useState, useEffect } from "react";
+import type { Server, CreateServerData } from "../../types/server";
+import { ServerForm } from "./ServerForm";
+import { ServerList } from "./ServerList";
+import { Button } from "./ui/button";
+import { ContextualHelpIcon } from "./ContextualHelpIcon";
+import { useRegisterModal, ModalPortal } from "./modal/ModalStackProvider";
+import { X } from "lucide-react";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -14,7 +15,11 @@ interface SettingsModalProps {
 }
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-  useRegisterModal(isOpen, { id: 'settings-modal', allowEscape: true, onClose });
+  const zIndex = useRegisterModal(isOpen, {
+    id: "settings-modal",
+    allowEscape: true,
+    onClose,
+  });
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,18 +34,18 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/servers');
+      const response = await fetch("/api/servers");
       if (!response.ok) {
-        throw new Error('Failed to fetch servers');
+        throw new Error("Failed to fetch servers");
       }
       const data = await response.json();
       // Sort servers by name alphabetically
-      const sortedServers = (data as Server[]).sort((a, b) => 
-        (a.name ?? '').localeCompare(b.name ?? '')
+      const sortedServers = (data as Server[]).sort((a, b) =>
+        (a.name ?? "").localeCompare(b.name ?? ""),
       );
       setServers(sortedServers);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setLoading(false);
     }
@@ -48,127 +53,154 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
   const handleCreateServer = async (serverData: CreateServerData) => {
     try {
-      const response = await fetch('/api/servers', {
-        method: 'POST',
+      const response = await fetch("/api/servers", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(serverData),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to create server');
+        throw new Error("Failed to create server");
       }
 
       await fetchServers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create server');
+      setError(err instanceof Error ? err.message : "Failed to create server");
     }
   };
 
-  const handleUpdateServer = async (id: number, serverData: CreateServerData) => {
+  const handleUpdateServer = async (
+    id: number,
+    serverData: CreateServerData,
+  ) => {
     try {
       const response = await fetch(`/api/servers/${id}`, {
-        method: 'PUT',
+        method: "PUT",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(serverData),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update server');
+        throw new Error("Failed to update server");
       }
 
       await fetchServers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update server');
+      setError(err instanceof Error ? err.message : "Failed to update server");
     }
   };
 
   const handleDeleteServer = async (id: number) => {
     try {
       const response = await fetch(`/api/servers/${id}`, {
-        method: 'DELETE',
+        method: "DELETE",
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete server');
+        throw new Error("Failed to delete server");
       }
 
       await fetchServers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete server');
+      setError(err instanceof Error ? err.message : "Failed to delete server");
     }
   };
 
   if (!isOpen) return null;
 
   return (
-        <div className="fixed inset-0 backdrop-blur-sm bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
-            <div className="bg-card rounded-lg shadow-xl max-w-4xl w-full max-h-[95vh] sm:max-h-[90vh] overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 sm:p-6 border-b border-border">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl sm:text-2xl font-bold text-card-foreground">Settings</h2>
-            <ContextualHelpIcon section="server-settings" tooltip="Help with Server Settings" />
+    <ModalPortal>
+      <div
+        className="fixed inset-0 flex items-center justify-center bg-black/50 p-2 backdrop-blur-sm sm:p-4"
+        style={{ zIndex }}
+      >
+        <div className="bg-card max-h-[95vh] w-full max-w-4xl overflow-hidden rounded-2xl border shadow-2xl sm:max-h-[90vh]">
+          {/* Header */}
+          <div className="border-border/60 flex items-center justify-between border-b px-5 py-4 sm:px-6">
+            <div className="flex items-center gap-2">
+              <h2 className="text-foreground text-lg font-bold tracking-tight sm:text-xl">
+                Server Settings
+              </h2>
+              <ContextualHelpIcon
+                section="server-settings"
+                tooltip="Help with Server Settings"
+              />
+            </div>
+            <Button
+              onClick={onClose}
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 rounded-full"
+            >
+              <X className="h-4 w-4" />
+            </Button>
           </div>
-          <Button
-            onClick={onClose}
-            variant="ghost"
-            size="icon"
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </Button>
-        </div>
 
-
-        {/* Content */}
-        <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(95vh-180px)] sm:max-h-[calc(90vh-200px)]">
-          {error && (
-            <div className="mb-4 p-3 sm:p-4 bg-destructive/10 border border-destructive rounded-md">
-              <div className="flex">
-                <div className="flex-shrink-0">
-                  <svg className="h-4 w-4 sm:h-5 sm:w-5 text-error" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                  </svg>
-                </div>
-                <div className="ml-2 sm:ml-3 min-w-0 flex-1">
-                  <h3 className="text-xs sm:text-sm font-medium text-error-foreground">Error</h3>
-                  <div className="mt-1 sm:mt-2 text-xs sm:text-sm text-error/80 break-words">{error}</div>
+          {/* Content */}
+          <div className="max-h-[calc(95vh-100px)] overflow-y-auto p-4 sm:max-h-[calc(90vh-100px)] sm:p-6">
+            {error && (
+              <div className="bg-destructive/10 border-destructive mb-4 rounded-md border p-3 sm:p-4">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <svg
+                      className="text-error h-4 w-4 sm:h-5 sm:w-5"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                  <div className="ml-2 min-w-0 flex-1 sm:ml-3">
+                    <h3 className="text-error-foreground text-xs font-medium sm:text-sm">
+                      Error
+                    </h3>
+                    <div className="text-error/80 mt-1 text-xs break-words sm:mt-2 sm:text-sm">
+                      {error}
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          <div className="space-y-4 sm:space-y-6">
-            <div>
-              <h3 className="text-base sm:text-lg font-medium text-foreground mb-3 sm:mb-4">Server Configurations</h3>
-              <ServerForm onSubmit={handleCreateServer} />
-            </div>
-            
-            <div>
-              <h3 className="text-base sm:text-lg font-medium text-foreground mb-3 sm:mb-4">Saved Servers</h3>
-              {loading ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                  <p className="mt-2 text-muted-foreground">Loading servers...</p>
-                </div>
-              ) : (
-                <ServerList
-                  servers={servers}
-                  onUpdate={handleUpdateServer}
-                  onDelete={handleDeleteServer}
-                />
-              )}
+            <div className="space-y-4 sm:space-y-6">
+              <div>
+                <h3 className="text-foreground mb-3 text-base font-medium sm:mb-4 sm:text-lg">
+                  Server Configurations
+                </h3>
+                <ServerForm onSubmit={handleCreateServer} />
+              </div>
+
+              <div>
+                <h3 className="text-foreground mb-3 text-base font-medium sm:mb-4 sm:text-lg">
+                  Saved Servers
+                </h3>
+                {loading ? (
+                  <div className="text-muted-foreground py-8 text-center">
+                    <div className="border-primary inline-block h-8 w-8 animate-spin rounded-full border-b-2"></div>
+                    <p className="text-muted-foreground mt-2">
+                      Loading servers...
+                    </p>
+                  </div>
+                ) : (
+                  <ServerList
+                    servers={servers}
+                    onUpdate={handleUpdateServer}
+                    onDelete={handleDeleteServer}
+                  />
+                )}
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </ModalPortal>
   );
 }
-

@@ -1,7 +1,7 @@
-import { readdir, stat, readFile, access } from 'fs/promises';
-import { join, resolve, extname } from 'path';
-import { env } from '~/env.js';
-import { spawn, type ChildProcess } from 'child_process';
+import { readdir, stat, readFile, access } from "fs/promises";
+import { join, resolve, extname } from "path";
+import { env } from "~/env.js";
+import { spawn, type ChildProcess } from "child_process";
 
 export interface ScriptInfo {
   name: string;
@@ -33,12 +33,12 @@ export class ScriptManager {
     try {
       // Check if the date is valid
       if (!mtime || isNaN(mtime.getTime())) {
-        console.warn('Invalid mtime detected, using current time as fallback');
+        console.warn("Invalid mtime detected, using current time as fallback");
         return new Date();
       }
       return mtime;
     } catch (error) {
-      console.warn('Error processing mtime:', error);
+      console.warn("Error processing mtime:", error);
       return new Date();
     }
   }
@@ -46,11 +46,15 @@ export class ScriptManager {
   private initializeConfig() {
     if (this.scriptsDir === null) {
       // Handle both absolute and relative paths for testing
-      this.scriptsDir = env.SCRIPTS_DIRECTORY.startsWith('/') 
-        ? env.SCRIPTS_DIRECTORY 
+      this.scriptsDir = env.SCRIPTS_DIRECTORY.startsWith("/")
+        ? env.SCRIPTS_DIRECTORY
         : join(process.cwd(), env.SCRIPTS_DIRECTORY);
-      this.allowedExtensions = env.ALLOWED_SCRIPT_EXTENSIONS.split(',').map(ext => ext.trim());
-      this.allowedPaths = env.ALLOWED_SCRIPT_PATHS.split(',').map(path => path.trim());
+      this.allowedExtensions = env.ALLOWED_SCRIPT_EXTENSIONS.split(",").map(
+        (ext) => ext.trim(),
+      );
+      this.allowedPaths = env.ALLOWED_SCRIPT_PATHS.split(",").map((path) =>
+        path.trim(),
+      );
       this.maxExecutionTime = parseInt(env.MAX_SCRIPT_EXECUTION_TIME, 10);
     }
   }
@@ -70,19 +74,19 @@ export class ScriptManager {
 
         if (stats.isFile()) {
           const extension = extname(file);
-          
+
           // Check if file extension is allowed
           if (this.allowedExtensions!.includes(extension)) {
             // Check if file is executable
             const executable = await this.isExecutable(filePath);
-            
+
             scripts.push({
               name: file,
               path: filePath,
               extension,
               size: stats.size,
               lastModified: this.safeMtime(stats.mtime),
-              executable
+              executable,
             });
           }
         }
@@ -90,7 +94,7 @@ export class ScriptManager {
 
       return scripts.sort((a, b) => a.name.localeCompare(b.name));
     } catch (error) {
-      console.error('Error reading scripts directory:', error);
+      console.error("Error reading scripts directory:", error);
       return [];
     }
   }
@@ -101,8 +105,8 @@ export class ScriptManager {
   async getCtScripts(): Promise<ScriptInfo[]> {
     this.initializeConfig();
     try {
-      const ctDir = join(this.scriptsDir!, 'ct');
-      
+      const ctDir = join(this.scriptsDir!, "ct");
+
       // Check if ct directory exists
       try {
         await stat(ctDir);
@@ -110,7 +114,7 @@ export class ScriptManager {
         console.warn(`CT scripts directory not found: ${ctDir}`);
         return [];
       }
-      
+
       const files = await readdir(ctDir);
       const scripts: ScriptInfo[] = [];
 
@@ -120,25 +124,30 @@ export class ScriptManager {
 
         if (stats.isFile()) {
           const extension = extname(file);
-          
+
           // Check if file extension is allowed
           if (this.allowedExtensions!.includes(extension)) {
             // Check if file is executable
             const executable = await this.isExecutable(filePath);
-            
+
             // Extract slug from filename (remove .sh extension)
-            const slug = file.replace(/\.sh$/, '');
-            
+            const slug = file.replace(/\.sh$/, "");
+
             // Try to get logo from local cache (avoids per-script HTTP calls to PocketBase)
             let logo: string | undefined;
             try {
-              const logoPath = join(process.cwd(), 'public', 'logos', `${slug}.webp`);
+              const logoPath = join(
+                process.cwd(),
+                "public",
+                "logos",
+                `${slug}.webp`,
+              );
               await access(logoPath);
               logo = `/logos/${slug}.webp`;
             } catch {
               // Logo not cached locally, that's okay
             }
-            
+
             scripts.push({
               name: file,
               path: filePath,
@@ -147,7 +156,7 @@ export class ScriptManager {
               lastModified: this.safeMtime(stats.mtime),
               executable,
               logo,
-              slug
+              slug,
             });
           }
         }
@@ -155,7 +164,7 @@ export class ScriptManager {
 
       return scripts.sort((a, b) => a.name.localeCompare(b.name));
     } catch (error) {
-      console.error('Error reading ct scripts directory:', error);
+      console.error("Error reading ct scripts directory:", error);
       return [];
     }
   }
@@ -166,14 +175,14 @@ export class ScriptManager {
   async getAllDownloadedScripts(): Promise<ScriptInfo[]> {
     this.initializeConfig();
     const allScripts: ScriptInfo[] = [];
-    
+
     // Define all script directories to scan
-    const scriptDirs = ['ct', 'tools', 'vm', 'vw'];
-    
+    const scriptDirs = ["ct", "tools", "vm", "vw"];
+
     for (const dirName of scriptDirs) {
       try {
         const dirPath = join(this.scriptsDir!, dirName);
-        
+
         // Check if directory exists
         try {
           await stat(dirPath);
@@ -181,7 +190,7 @@ export class ScriptManager {
           // Directory doesn't exist, skip it
           continue;
         }
-        
+
         const scripts = await this.getScriptsFromDirectory(dirPath);
         allScripts.push(...scripts);
       } catch (error) {
@@ -196,10 +205,15 @@ export class ScriptManager {
   /**
    * Get scripts from a specific directory (recursively)
    */
-  private async getScriptsFromDirectory(dirPath: string): Promise<ScriptInfo[]> {
+  private async getScriptsFromDirectory(
+    dirPath: string,
+  ): Promise<ScriptInfo[]> {
     const scripts: ScriptInfo[] = [];
-    
-    const scanDirectory = async (currentPath: string, relativePath = ''): Promise<void> => {
+
+    const scanDirectory = async (
+      currentPath: string,
+      relativePath = "",
+    ): Promise<void> => {
       const files = await readdir(currentPath);
 
       for (const file of files) {
@@ -208,25 +222,30 @@ export class ScriptManager {
 
         if (stats.isFile()) {
           const extension = extname(file);
-          
+
           // Check if file extension is allowed
           if (this.allowedExtensions!.includes(extension)) {
             // Check if file is executable
             const executable = await this.isExecutable(filePath);
-            
+
             // Extract slug from filename (remove .sh extension)
-            const slug = file.replace(/\.sh$/, '');
-            
+            const slug = file.replace(/\.sh$/, "");
+
             // Try to get logo from local cache (avoids per-script HTTP calls to PocketBase)
             let logo: string | undefined;
             try {
-              const logoPath = join(process.cwd(), 'public', 'logos', `${slug}.webp`);
+              const logoPath = join(
+                process.cwd(),
+                "public",
+                "logos",
+                `${slug}.webp`,
+              );
               await access(logoPath);
               logo = `/logos/${slug}.webp`;
             } catch {
               // Logo not cached locally, that's okay
             }
-            
+
             scripts.push({
               name: file,
               path: filePath,
@@ -235,12 +254,14 @@ export class ScriptManager {
               lastModified: this.safeMtime(stats.mtime),
               executable,
               logo,
-              slug
+              slug,
             });
           }
         } else if (stats.isDirectory()) {
           // Recursively scan subdirectories
-          const subRelativePath = relativePath ? join(relativePath, file) : file;
+          const subRelativePath = relativePath
+            ? join(relativePath, file)
+            : file;
           await scanDirectory(filePath, subRelativePath);
         }
       }
@@ -258,7 +279,7 @@ export class ScriptManager {
       const stats = await stat(filePath);
       // Check if file has execute permission for owner, group, or others
       const mode = stats.mode;
-      const isExecutable = !!(mode & parseInt('111', 8));
+      const isExecutable = !!(mode & parseInt("111", 8));
       return isExecutable;
     } catch {
       return false;
@@ -277,19 +298,29 @@ export class ScriptManager {
     if (!resolvedPath.startsWith(scriptsDirResolved)) {
       return {
         valid: false,
-        message: 'Script path is not within the allowed scripts directory'
+        message: "Script path is not within the allowed scripts directory",
       };
     }
 
     // Check if the script path matches any allowed path pattern
-    const relativePath = resolvedPath.replace(scriptsDirResolved, '').replace(/\\/g, '/');
-    const normalizedRelativePath = relativePath.startsWith('/') ? relativePath : '/' + relativePath;
-    
-    const isAllowed = this.allowedPaths!.some(allowedPath => {
-      const normalizedAllowedPath = allowedPath.startsWith('/') ? allowedPath : '/' + allowedPath;
+    const relativePath = resolvedPath
+      .replace(scriptsDirResolved, "")
+      .replace(/\\/g, "/");
+    const normalizedRelativePath = relativePath.startsWith("/")
+      ? relativePath
+      : "/" + relativePath;
+
+    const isAllowed = this.allowedPaths!.some((allowedPath) => {
+      const normalizedAllowedPath = allowedPath.startsWith("/")
+        ? allowedPath
+        : "/" + allowedPath;
       // For root path '/', allow files directly in the scripts directory (no subdirectories)
-      if (normalizedAllowedPath === '/') {
-        return normalizedRelativePath === '/' || (normalizedRelativePath.startsWith('/') && !normalizedRelativePath.substring(1).includes('/'));
+      if (normalizedAllowedPath === "/") {
+        return (
+          normalizedRelativePath === "/" ||
+          (normalizedRelativePath.startsWith("/") &&
+            !normalizedRelativePath.substring(1).includes("/"))
+        );
       }
       // For other paths like '/ct/', check if the path starts with it
       return normalizedRelativePath.startsWith(normalizedAllowedPath);
@@ -298,7 +329,7 @@ export class ScriptManager {
     if (!isAllowed) {
       return {
         valid: false,
-        message: 'Script path is not in the allowed paths list'
+        message: "Script path is not in the allowed paths list",
       };
     }
 
@@ -307,7 +338,7 @@ export class ScriptManager {
     if (!this.allowedExtensions!.includes(extension)) {
       return {
         valid: false,
-        message: `File extension '${extension}' is not allowed. Allowed extensions: ${this.allowedExtensions!.join(', ')}`
+        message: `File extension '${extension}' is not allowed. Allowed extensions: ${this.allowedExtensions!.join(", ")}`,
       };
     }
 
@@ -329,22 +360,22 @@ export class ScriptManager {
     let args: string[] = [];
 
     switch (extension) {
-      case '.sh':
-      case '.bash':
-        command = 'bash';
+      case ".sh":
+      case ".bash":
+        command = "bash";
         args = [scriptPath];
         break;
-      case '.py':
-        command = 'python';
+      case ".py":
+        command = "python";
         args = [scriptPath];
         break;
-      case '.js':
-        command = 'node';
+      case ".js":
+        command = "node";
         args = [scriptPath];
         break;
-      case '.ts':
-        command = 'npx';
-        args = ['ts-node', scriptPath];
+      case ".ts":
+        command = "npx";
+        args = ["ts-node", scriptPath];
         break;
       default:
         // Try to execute directly (for files with shebang)
@@ -355,19 +386,19 @@ export class ScriptManager {
     // Spawn the process
     const childProcess = spawn(command, args, {
       cwd: this.scriptsDir!,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: true
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: true,
     });
 
     // Set up timeout
     const timeout = setTimeout(() => {
       if (!childProcess.killed) {
-        childProcess.kill('SIGTERM');
+        childProcess.kill("SIGTERM");
       }
     }, this.maxExecutionTime!);
 
     // Clean up timeout when process exits
-    childProcess.on('exit', () => {
+    childProcess.on("exit", () => {
       clearTimeout(timeout);
     });
 
@@ -383,7 +414,7 @@ export class ScriptManager {
       throw new Error(validation.message);
     }
 
-    return await readFile(scriptPath, 'utf-8');
+    return await readFile(scriptPath, "utf-8");
   }
 
   /**
@@ -400,7 +431,7 @@ export class ScriptManager {
       path: this.scriptsDir!,
       allowedExtensions: this.allowedExtensions!,
       allowedPaths: this.allowedPaths!,
-      maxExecutionTime: this.maxExecutionTime!
+      maxExecutionTime: this.maxExecutionTime!,
     };
   }
 }

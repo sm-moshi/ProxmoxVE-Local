@@ -5,10 +5,18 @@
 export type DirEntry = {
   name: string;
   path: string;
-  type: 'file' | 'dir';
+  type: "file" | "dir";
 };
 
 export interface GitProvider {
-  listDirectory(repoUrl: string, path: string, branch: string): Promise<DirEntry[]>;
-  downloadRawFile(repoUrl: string, filePath: string, branch: string): Promise<string>;
+  listDirectory(
+    repoUrl: string,
+    path: string,
+    branch: string,
+  ): Promise<DirEntry[]>;
+  downloadRawFile(
+    repoUrl: string,
+    filePath: string,
+    branch: string,
+  ): Promise<string>;
 }

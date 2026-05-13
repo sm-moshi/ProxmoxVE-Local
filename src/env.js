@@ -7,7 +7,6 @@ export const env = createEnv({
    * isn't built with invalid env vars.
    */
   server: {
-   
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
@@ -15,7 +14,7 @@ export const env = createEnv({
     PB_URL: z.string().url().default("https://db.community-scripts.org"),
     // Repository Configuration (for downloading script files)
     REPO_URL: z.string().url().optional(),
-   
+
     REPO_BRANCH: z.string().default("main"),
     SCRIPTS_DIRECTORY: z.string().default("scripts"),
     ALLOWED_SCRIPT_EXTENSIONS: z.string().default(".sh,.py,.js,.ts,.bash"),
@@ -37,6 +36,8 @@ export const env = createEnv({
     JWT_SECRET: z.string().optional(),
     // Server Color Coding Configuration
     SERVER_COLOR_CODING_ENABLED: z.string().optional(),
+    // Update Channel
+    ALLOW_PRERELEASE: z.string().optional(),
   },
 
   /**
@@ -58,7 +59,7 @@ export const env = createEnv({
     PB_URL: process.env.PB_URL,
     // Repository Configuration (for downloading script files)
     REPO_URL: process.env.REPO_URL,
-   
+
     REPO_BRANCH: process.env.REPO_BRANCH,
     SCRIPTS_DIRECTORY: process.env.SCRIPTS_DIRECTORY,
     ALLOWED_SCRIPT_EXTENSIONS: process.env.ALLOWED_SCRIPT_EXTENSIONS,
@@ -79,6 +80,8 @@ export const env = createEnv({
     JWT_SECRET: process.env.JWT_SECRET,
     // Server Color Coding Configuration
     SERVER_COLOR_CODING_ENABLED: process.env.SERVER_COLOR_CODING_ENABLED,
+    // Update Channel
+    ALLOW_PRERELEASE: process.env.ALLOW_PRERELEASE,
     // NEXT_PUBLIC_CLIENTVAR: process.env.NEXT_PUBLIC_CLIENTVAR,
   },
   /**

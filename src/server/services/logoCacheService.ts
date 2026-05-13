@@ -6,11 +6,11 @@
  * ScriptCard / ScriptDetailModal can then use `/logos/{slug}.{ext}` as the src.
  */
 
-import { existsSync, mkdirSync } from 'fs';
-import { writeFile, readdir, unlink } from 'fs/promises';
-import { join, extname } from 'path';
+import { existsSync, mkdirSync } from "fs";
+import { writeFile, readdir, unlink } from "fs/promises";
+import { join, extname } from "path";
 
-const LOGOS_DIR = join(process.cwd(), 'public', 'logos');
+const LOGOS_DIR = join(process.cwd(), "public", "logos");
 
 /** Ensure the logos directory exists. */
 function ensureLogosDir(): void {
@@ -24,11 +24,15 @@ function getExtension(url: string): string {
   try {
     const pathname = new URL(url).pathname;
     const ext = extname(pathname).toLowerCase();
-    if (['.png', '.jpg', '.jpeg', '.svg', '.webp', '.gif', '.ico'].includes(ext)) {
+    if (
+      [".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif", ".ico"].includes(ext)
+    ) {
       return ext;
     }
-  } catch { /* invalid URL */ }
-  return '.webp'; // default
+  } catch {
+    /* invalid URL */
+  }
+  return ".webp"; // default
 }
 
 export interface LogoEntry {
@@ -43,12 +47,13 @@ export interface LogoEntry {
  */
 export async function cacheLogos(
   entries: LogoEntry[],
-  options?: { force?: boolean; concurrency?: number }
+  options?: { force?: boolean; concurrency?: number; verbose?: boolean },
 ): Promise<{ downloaded: number; skipped: number; errors: number }> {
   ensureLogosDir();
 
   const force = options?.force ?? false;
   const concurrency = options?.concurrency ?? 10;
+  const verbose = options?.verbose ?? false;
   let downloaded = 0;
   let skipped = 0;
   let errors = 0;
@@ -84,9 +89,17 @@ export async function cacheLogos(
       }),
     );
 
-    for (const r of results) {
-      if (r.status === 'rejected') {
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j];
+      if (!r) continue;
+      if (r.status === "rejected") {
         errors++;
+        if (verbose) {
+          const entry = batch[j];
+          console.warn(
+            `[cache-logos] Error for ${entry?.slug} (${entry?.url}): ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`,
+          );
+        }
       }
     }
   }
@@ -98,7 +111,10 @@ export async function cacheLogos(
  * Given a remote logo URL and a slug, return the local path if the logo
  * has been cached, otherwise return the original URL.
  */
-export function getLocalLogoPath(slug: string, remoteUrl: string | null): string | null {
+export function getLocalLogoPath(
+  slug: string,
+  remoteUrl: string | null,
+): string | null {
   if (!remoteUrl) return null;
   const ext = getExtension(remoteUrl);
   const filename = `${slug}${ext}`;
@@ -112,18 +128,22 @@ export function getLocalLogoPath(slug: string, remoteUrl: string | null): string
 /**
  * Clean up logos for scripts that no longer exist.
  */
-export async function cleanupOrphanedLogos(activeSlugs: Set<string>): Promise<number> {
+export async function cleanupOrphanedLogos(
+  activeSlugs: Set<string>,
+): Promise<number> {
   ensureLogosDir();
   let removed = 0;
   try {
     const files = await readdir(LOGOS_DIR);
     for (const file of files) {
-      const slug = file.replace(/\.[^.]+$/, '');
+      const slug = file.replace(/\.[^.]+$/, "");
       if (!activeSlugs.has(slug)) {
         await unlink(join(LOGOS_DIR, file));
         removed++;
       }
     }
-  } catch { /* directory may not exist yet */ }
+  } catch {
+    /* directory may not exist yet */
+  }
   return removed;
 }
