@@ -1618,7 +1618,7 @@ export function GeneralSettingsModal({
                             </label>
                             <textarea
                               id="apprise-urls"
-                              placeholder="gotifys://ntfy.m0sh1.cc/YOUR_GOTIFY_APP_TOKEN&#10;https://ntfy.m0sh1.cc/message?token=YOUR_GOTIFY_APP_TOKEN"
+                              placeholder={`gotifys://ntfy.m0sh1.cc/YOUR_GOTIFY_APP_TOKEN\nhttps://ntfy.m0sh1.cc/message?token=YOUR_GOTIFY_APP_TOKEN`}
                               value={appriseUrlsText}
                               onChange={(e) =>
                                 handleAppriseUrlsChange(e.target.value)
